@@ -6,6 +6,14 @@ use serde::Serialize;
 use tauri::{Emitter, State};
 
 #[derive(Serialize)]
+struct FileMeta {
+    /// File size in bytes.
+    size: u64,
+    /// Last modification time as UNIX epoch seconds.
+    modified_secs: u64,
+}
+
+#[derive(Serialize)]
 struct DirEntry {
     name: String,
     path: String,
@@ -138,9 +146,24 @@ fn get_initial_path(state: State<AppState>) -> Option<String> {
 }
 
 /// Read a markdown file's raw text.
+/// Tries UTF-8 first, then falls back to common ANSI encodings (GBK, Big5, etc.)
+/// so files saved by Notepad in "ANSI" mode open without errors.
 #[tauri::command]
 fn read_md(path: String) -> Result<String, String> {
-    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {path}: {e}"))
+    let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read {path}: {e}"))?;
+    if let Ok(s) = String::from_utf8(bytes.clone()) {
+        return Ok(s);
+    }
+    // Fallback: try common locale encodings, then use lossy UTF-8 as last resort.
+    for label in &["gbk", "big5", "shift_jis", "euc-kr", "windows-1252"] {
+        if let Some(enc) = encoding_rs::Encoding::for_label_no_replacement(label.as_bytes()) {
+            let (cow, _enc_used, had_err) = enc.decode(&bytes);
+            if !had_err {
+                return Ok(cow.into_owned());
+            }
+        }
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Open a file in a brand-new application window (spawns another instance).
@@ -152,6 +175,21 @@ fn open_new_window(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Return file size and last-modified time (UNIX seconds) for the given path.
+#[tauri::command]
+fn file_meta(path: String) -> Result<FileMeta, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let modified = meta
+        .modified()
+        .map_err(|e| e.to_string())?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?;
+    Ok(FileMeta {
+        size: meta.len(),
+        modified_secs: modified.as_secs(),
+    })
 }
 
 /// Write text back to a markdown file.
@@ -217,7 +255,8 @@ pub fn run() {
             write_md,
             list_dir,
             open_new_window,
-            watch_file
+            watch_file,
+            file_meta
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

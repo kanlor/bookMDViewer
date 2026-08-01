@@ -85,10 +85,14 @@ const closeModal = document.getElementById("close-modal") as HTMLElement;
 const closeDocBtn = document.getElementById("close-doc-btn") as HTMLButtonElement;
 const toastEl = document.getElementById("toast") as HTMLElement;
 const appWindow = getCurrentWindow();
+const sbPathEl = document.getElementById("sb-path") as HTMLElement;
+const sbOutlineEl = document.getElementById("sb-outline") as HTMLElement;
+const sbStatsEl = document.getElementById("sb-stats") as HTMLElement;
+const sbFileinfoEl = document.getElementById("sb-fileinfo") as HTMLElement;
 const EMPTY_STATE_HTML = `<div class="empty-state">
-  <h1>Markdown Viewer</h1>
-  <p>Drag a <code>.md</code> file here, or <a id="empty-open" href="#">open one</a>.</p>
-  <p class="app-version"><a id="about-open" href="#">關於 / About</a></p>
+  <h1>KanlorOne MarkDownViewer</h1>
+  <p>拖放 <code>.md</code> 文件到此处，或 <a id="empty-open" href="#">打开文件</a>。</p>
+  <p class="app-version"><a id="about-open" href="#">关于 / About</a></p>
   <div id="recent-list"></div>
 </div>`;
 let closeAction: "window" | "doc" | "switch" = "window";
@@ -163,8 +167,8 @@ function addCopyButtons(): void {
       const btn = document.createElement("button");
       btn.className = "copy-btn";
       btn.type = "button";
-      btn.title = "複製";
-      btn.setAttribute("aria-label", "複製程式碼");
+      btn.title = "复制";
+      btn.setAttribute("aria-label", "复制代码");
       btn.textContent = "📋";
       btn.addEventListener("click", async (ev) => {
         ev.stopPropagation();
@@ -178,7 +182,7 @@ function addCopyButtons(): void {
             btn.classList.remove("copied");
           }, 1400);
         } catch {
-          toast("複製失敗");
+          toast("复制失败");
         }
       });
       pre.appendChild(btn);
@@ -447,15 +451,58 @@ async function renderMarkdown(
 
   // New documents start at the top; only hot-reload / live-edit keep position.
   content.scrollTop = preserveScroll ? scrollTop : 0;
+  void updateStatusBar();
 }
 
 function setTitle(): void {
-  const name = currentPath?.split(/[\\/]/).pop() ?? "Markdown Viewer";
-  document.title = `${dirty ? "● " : ""}${name} — Markdown Viewer`;
+  const name = currentPath?.split(/[\\/]/).pop() ?? "KanlorOne MarkDownViewer";
+  document.title = `${dirty ? "● " : ""}${name} — KanlorOne MarkDownViewer`;
   saveBtn.hidden = !editMode;
   saveBtn.disabled = !dirty;
-  saveBtn.textContent = dirty ? "💾 Save*" : "💾 Saved";
+  saveBtn.textContent = dirty ? "💾 保存*" : "💾 已保存";
   closeDocBtn.hidden = !currentPath;
+}
+
+// ---------- Status bar ----------
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function updateStatusBar(): Promise<void> {
+  if (!currentPath) {
+    sbPathEl.textContent = "未打开文件";
+    sbOutlineEl.textContent = "H1:0 / H2:0";
+    sbStatsEl.textContent = "中文:0 总字:0 图:0 表:0 代码:0";
+    sbFileinfoEl.textContent = "--";
+    return;
+  }
+  sbPathEl.textContent = currentPath;
+  // Outline
+  const h1Count = content.querySelectorAll("h1").length;
+  const h2Count = content.querySelectorAll("h2").length;
+  sbOutlineEl.textContent = `H1:${h1Count} / H2:${h2Count}`;
+  // Content stats
+  const imgCount = content.querySelectorAll("img").length;
+  const tableCount = content.querySelectorAll("table").length;
+  const codeCount = content.querySelectorAll("pre.hljs").length;
+  const cjkRe = /[一-鿿㐀-䶿豈-﫿]/g;
+  const cjkCount = (currentText.match(cjkRe) ?? []).length;
+  sbStatsEl.textContent = `中文:${cjkCount} 总字:${currentText.length} 图:${imgCount} 表:${tableCount} 代码:${codeCount}`;
+  // File properties (async)
+  try {
+    const meta = await invoke<{ size: number; modified_secs: number }>(
+      "file_meta",
+      { path: currentPath },
+    );
+    const sizeStr = formatFileSize(meta.size);
+    const dateStr = new Date(meta.modified_secs * 1000).toLocaleString();
+    sbFileinfoEl.textContent = `${sizeStr} | ${dateStr}`;
+  } catch {
+    sbFileinfoEl.textContent = "--";
+  }
 }
 
 // Close the current document and return to the home / empty-state screen.
@@ -466,13 +513,14 @@ function goHome(): void {
   if (editMode) {
     editMode = false;
     layout.classList.remove("mode-edit");
-    editToggle.textContent = "✎ Edit";
+    editToggle.textContent = "✎ 编辑";
   }
   content.innerHTML = EMPTY_STATE_HTML;
   buildToc();
   renderRecents();
   if (filesOpen) void renderFiles(null);
   setTitle();
+  void updateStatusBar();
 }
 
 async function openFile(
@@ -515,7 +563,7 @@ function schedulePreview(): void {
 function setEditMode(on: boolean): void {
   editMode = on;
   layout.classList.toggle("mode-edit", on);
-  editToggle.textContent = on ? "👁 Preview" : "✎ Edit";
+  editToggle.textContent = on ? "👁 预览" : "✎ 编辑";
   if (on) {
     // Only reload from the saved snapshot when there are no unsaved edits;
     // otherwise entering edit mode would wipe the user's unsaved buffer
@@ -627,7 +675,7 @@ function buildExportHtml(): string {
   const themeCss = currentDark() ? hljsDarkCss : hljsLightCss;
 
   return `<!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -645,7 +693,7 @@ ${article.innerHTML}
 
 async function exportHtml(): Promise<void> {
   if (!currentPath) {
-    toast("沒有開啟的檔案");
+    toast("没有打开的文件");
     return;
   }
   // Make sure the preview reflects the latest source (e.g. while editing).
@@ -655,9 +703,9 @@ async function exportHtml(): Promise<void> {
   const out = `${base}.html`;
   try {
     await invoke("write_md", { path: out, content: buildExportHtml() });
-    toast(`已匯出 ${out.split(/[\\/]/).pop()}`);
+    toast(`已导出 ${out.split(/[\\/]/).pop()}`);
   } catch (e) {
-    toast(`匯出失敗: ${String(e)}`);
+    toast(`导出失败: ${String(e)}`);
   }
 }
 
@@ -762,9 +810,9 @@ const THEME_ICON: Record<ThemePref, string> = {
   dark: "🌙",
 };
 const THEME_TITLE: Record<ThemePref, string> = {
-  system: "主題:跟隨系統 (點擊切換)",
-  light: "主題:亮色 (點擊切換)",
-  dark: "主題:暗色 (點擊切換)",
+  system: "主题:跟随系统 (点击切换)",
+  light: "主题:亮色 (点击切换)",
+  dark: "主题:暗色 (点击切换)",
 };
 function applyTheme(): void {
   document.documentElement.dataset.theme = themePref;
@@ -802,19 +850,19 @@ interface FontOption {
 const DEFAULT_LATIN_STACK =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial';
 const LATIN_FONTS: FontOption[] = [
-  { id: "system", label: "系統預設 Sans", stack: DEFAULT_LATIN_STACK, generic: "sans-serif" },
+  { id: "system", label: "系统预设 Sans", stack: DEFAULT_LATIN_STACK, generic: "sans-serif" },
   { id: "serif", label: "Serif (Georgia)", stack: 'Georgia, "Times New Roman"', generic: "serif" },
   { id: "helvetica", label: "Helvetica / Arial", stack: "Helvetica, Arial", generic: "sans-serif" },
   { id: "verdana", label: "Verdana", stack: "Verdana, Geneva", generic: "sans-serif" },
-  { id: "mono", label: "等寬 Mono", stack: "ui-monospace, Consolas", generic: "monospace" },
+  { id: "mono", label: "等宽 Mono", stack: "ui-monospace, Consolas", generic: "monospace" },
 ];
 const CJK_FONTS: FontOption[] = [
-  { id: "system", label: "系統預設", stack: "" },
-  { id: "jhenghei", label: "微軟正黑體", stack: '"Microsoft JhengHei", "Microsoft YaHei"' },
-  { id: "pingfang", label: "蘋方 PingFang", stack: '"PingFang TC", "PingFang SC"' },
-  { id: "notosans", label: "思源黑體 Noto Sans", stack: '"Noto Sans TC", "Noto Sans CJK TC"' },
-  { id: "notoserif", label: "思源宋體 Noto Serif", stack: '"Noto Serif TC", "Noto Serif CJK TC"' },
-  { id: "kai", label: "標楷體", stack: '"DFKai-SB", "BiauKai", "Kaiti TC"' },
+  { id: "system", label: "系统默认", stack: "" },
+  { id: "jhenghei", label: "微软正黑体", stack: '"Microsoft JhengHei", "Microsoft YaHei"' },
+  { id: "pingfang", label: "苹方 PingFang", stack: '"PingFang TC", "PingFang SC"' },
+  { id: "notosans", label: "思源黑体 Noto Sans", stack: '"Noto Sans TC", "Noto Sans CJK TC"' },
+  { id: "notoserif", label: "思源宋体 Noto Serif", stack: '"Noto Serif TC", "Noto Serif CJK TC"' },
+  { id: "kai", label: "标楷体", stack: '"DFKai-SB", "BiauKai", "Kaiti TC"' },
 ];
 
 const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
@@ -835,7 +883,7 @@ function fillFontSelect(sel: HTMLSelectElement, opts: FontOption[]): void {
   // "Custom" lets the user type any installed font family by name.
   const custom = document.createElement("option");
   custom.value = "custom";
-  custom.textContent = "自訂… / Custom…";
+  custom.textContent = "自定义… / Custom…";
   sel.appendChild(custom);
 }
 fillFontSelect(fontLatinSel, LATIN_FONTS);
@@ -973,7 +1021,7 @@ function showUpdateStatus(text: string, isNew = false, url?: string): void {
   updateStatus.textContent = text;
   if (url) {
     const a = document.createElement("a");
-    a.textContent = "前往下載";
+    a.textContent = "前往下载";
     a.href = "#";
     a.addEventListener("click", (ev) => {
       ev.preventDefault();
@@ -985,7 +1033,7 @@ function showUpdateStatus(text: string, isNew = false, url?: string): void {
 
 async function checkUpdate(): Promise<void> {
   updateCheckBtn.disabled = true;
-  showUpdateStatus("檢查中…");
+  showUpdateStatus("检查中…");
   try {
     const res = await fetch(
       "https://api.github.com/repos/craig7351/bookMDViewer/releases/latest",
@@ -996,12 +1044,12 @@ async function checkUpdate(): Promise<void> {
     const latest = (data.tag_name ?? "").replace(/^v/, "");
     if (!latest) throw new Error("no tag");
     if (compareVersions(latest, __APP_VERSION__) > 0) {
-      showUpdateStatus(`發現新版 v${latest}`, true, data.html_url);
+      showUpdateStatus(`发现新版 v${latest}`, true, data.html_url);
     } else {
       showUpdateStatus("已是最新版本 ✓");
     }
   } catch {
-    showUpdateStatus("無法檢查更新(請確認網路)");
+    showUpdateStatus("无法检查更新(请确认网络)");
   } finally {
     updateCheckBtn.disabled = false;
   }
@@ -1024,7 +1072,7 @@ document.getElementById("about-github")?.addEventListener("click", () => {
 async function openViaDialog(): Promise<void> {
   const selected = await openDialog({
     multiple: false,
-    filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+    filters: [{ name: "KanlorOne MarkDownViewer", extensions: ["md", "markdown"] }],
   });
   if (typeof selected === "string") await openFile(selected);
 }
@@ -1060,7 +1108,7 @@ function renderRecents(): void {
   const list = getRecents();
   if (!list.length) return;
   const h = document.createElement("h3");
-  h.textContent = "最近開啟";
+  h.textContent = "最近打开";
   host.appendChild(h);
   list.forEach((p) => {
     const a = document.createElement("a");
@@ -1137,7 +1185,7 @@ function showFileMenu(ev: MouseEvent, path: string): void {
   const menu = document.createElement("div");
   menu.className = "ctx-menu";
   const item = document.createElement("button");
-  item.textContent = "在新視窗開啟";
+  item.textContent = "在新窗口打开";
   item.addEventListener("click", () => {
     closeFileMenu();
     void invoke("open_new_window", { path });
@@ -1158,7 +1206,7 @@ async function renderFiles(dir: string | null): Promise<void> {
     filesPanel.innerHTML = "";
     const hint = document.createElement("div");
     hint.className = "files-hint";
-    hint.textContent = "開啟檔案後可瀏覽其目錄";
+    hint.textContent = "打开文件后可浏览其目录";
     filesPanel.appendChild(hint);
     return;
   }
@@ -1353,7 +1401,7 @@ function runFind(backwards: boolean): void {
       find: (s: string, c: boolean, b: boolean, w: boolean) => boolean;
     }
   ).find(q, false, backwards, true);
-  findCount.textContent = found ? "" : "無相符";
+  findCount.textContent = found ? "" : "无匹配";
 }
 findInput.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") {

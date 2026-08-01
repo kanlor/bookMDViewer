@@ -12,5 +12,5 @@ fn main() {
         }
     }
 
-    md_viewer_lib::run()
+    kanlorone_md_viewer_lib::run()
 }
