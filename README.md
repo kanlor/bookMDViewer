@@ -44,6 +44,9 @@ Mermaid 图表、可即时预览的编辑器，以及一键导出成自包含的
 - **文档内搜索**（`Ctrl+F`）、**打开文件对话框**（`Ctrl+O`）与**最近打开列表**
 - **YAML front matter** —— 开头的 `---...---` 会渲染成漂亮的 metadata 卡片（标题、description、日期、标签、Draft 徽章），而非乱掉的分隔线
 - **本机相对路径图片** —— 文件中 `![](images/x.png)` 会正确显示
+- **多编码兼容** —— 自动识别 UTF-8 / GBK / Big5 / Shift_JIS / EUC-KR 等编码，
+  Windows 记事本默认保存的 ANSI 文件可直接打开
+- **底部状态栏** —— 实时显示文件路径、章节数量（H1/H2）、内容统计（中文数/总字/图表/代码块）、文件属性（大小/修改日期）
 - **安全** —— 渲染后的 HTML 会经过 DOMPurify 清理并套用严格 CSP，打开不信任的文件也不会执行恶意脚本
 - 深色 / 浅色主题跟随系统设定
 - 外部链接以你的默认浏览器打开
@@ -54,8 +57,8 @@ Mermaid 图表、可即时预览的编辑器，以及一键导出成自包含的
 
 | 平台 | 文件 |
 | --- | --- |
-| Windows（安装版，**推荐**） | `Markdown.Viewer_*_x64-setup.exe` 或 `*_x64_en-US.msi` |
-| Windows（免安装便携版） | `Markdown.Viewer_*_x64_portable.exe` |
+| Windows（安装版，**推荐**） | `KanlorOne MarkDownViewer_*_x64-setup.exe` 或 `*_x64_en-US.msi` |
+| Windows（免安装便携版） | `KanlorOne MarkDownViewer_*_x64_portable.exe` |
 | macOS（Apple Silicon / Intel） | `*_aarch64.dmg` / `*_x64.dmg` |
 | Linux | `*_amd64.AppImage`、`*_amd64.deb`、`*.x86_64.rpm` |
 
@@ -82,13 +85,13 @@ SmartScreen 偶尔会把它误判为 `Program:Win32/Wacapew.A!ml` 之类的「�
 第一次打开时可能会被系统拦下（出现「无法打开，因为无法验证开发者」之类的消息）。
 请任选一种方式解除：
 
-- **右键打开**（Ventura 以前）：在 `Markdown Viewer.app` 上按右键 →「打开」→ 再按一次「打开」。
+- **右键打开**（Ventura 以前）：在 `KanlorOne MarkDownViewer.app` 上按右键 →「打开」→ 再按一次「打开」。
 - **系统设置**（Sonoma / Sequoia）：先双击一次被挡下后，到 **系统设置 → 隐私与安全性**，
   找到被阻止的提示，按 **「仍要打开 / Open Anyway」**。
 - **或用终端执行一次**（清除隔离属性）：
 
   ```bash
-  xattr -cr "/Applications/Markdown Viewer.app"
+  xattr -cr "/Applications/KanlorOne MarkDownViewer.app"
   ```
 
 之后就能正常打开，不需要每次都做。
@@ -99,7 +102,7 @@ SmartScreen 偶尔会把它误判为 `Program:Win32/Wacapew.A!ml` 之类的「�
 App 已默认停用 WebKitGTK 的 DMABUF 渲染来绕过。若仍有问题，可在启动前再加一个环境变量：
 
 ```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 ./Markdown.Viewer_*_amd64.AppImage
+WEBKIT_DISABLE_COMPOSITING_MODE=1 ./KanlorOne.MarkDownViewer_*_amd64.AppImage
 ```
 
 （也可反过来用 `WEBKIT_DISABLE_DMABUF_RENDERER=0` 还原默认行为。）
@@ -118,9 +121,9 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 ./Markdown.Viewer_*_amd64.AppImage
 ## 启动参数
 
 ```bash
-md-viewer.exe file.md            # 打开并渲染
-md-viewer.exe file.md --edit     # 直接进入编辑模式
-md-viewer.exe file.md --zoom=1.5 # 整体 UI 放大（高 DPI / 无障碍）
+KanlorOne-MarkDownViewer.exe file.md            # 打开并渲染
+KanlorOne-MarkDownViewer.exe file.md --edit     # 直接进入编辑模式
+KanlorOne-MarkDownViewer.exe file.md --zoom=1.5 # 整体 UI 放大（高 DPI / 无障碍）
 ```
 
 ## 开发
@@ -136,7 +139,7 @@ npm run tauri dev
 npm run tauri build
 ```
 
-产出（Windows）：`src-tauri/target/release/md-viewer.exe`，以及位于
+产出（Windows）：`src-tauri/target/release/KanlorOne-MarkDownViewer.exe`，以及位于
 `src-tauri/target/release/bundle/` 的 NSIS / MSI 安装文件。
 
 ## 跨平台发布
