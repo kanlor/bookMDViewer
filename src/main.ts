@@ -99,6 +99,7 @@ let closeAction: "window" | "doc" | "switch" = "window";
 let pendingSwitchPath: string | null = null;
 let currentPath: string | null = null;
 let currentText = "";
+let currentEncoding = "";
 let editMode = false;
 let dirty = false;
 let suppressReloadUntil = 0;
@@ -499,7 +500,8 @@ async function updateStatusBar(): Promise<void> {
     );
     const sizeStr = formatFileSize(meta.size);
     const dateStr = new Date(meta.modified_secs * 1000).toLocaleString();
-    sbFileinfoEl.textContent = `${sizeStr} | ${dateStr}`;
+    const encStr = currentEncoding || "?";
+    sbFileinfoEl.textContent = `${encStr} | ${sizeStr} | ${dateStr}`;
   } catch {
     sbFileinfoEl.textContent = "--";
   }
@@ -509,6 +511,7 @@ async function updateStatusBar(): Promise<void> {
 function goHome(): void {
   currentPath = null;
   currentText = "";
+  currentEncoding = "";
   dirty = false;
   if (editMode) {
     editMode = false;
@@ -529,14 +532,15 @@ async function openFile(
   preserveScroll = false,
 ): Promise<void> {
   try {
-    const text = await invoke<string>("read_md", { path });
+    const result = await invoke<{ text: string; encoding: string }>("read_md", { path });
     currentPath = path;
-    currentText = text;
+    currentText = result.text;
+    currentEncoding = result.encoding;
     dirty = false;
     addRecent(path);
-    if (editMode) editor.value = text;
+    if (editMode) editor.value = result.text;
     setTitle();
-    await renderMarkdown(text, preserveScroll);
+    await renderMarkdown(result.text, preserveScroll);
     if (watch) {
       await invoke("watch_file", { path });
     }
@@ -1221,6 +1225,23 @@ async function renderFiles(dir: string | null): Promise<void> {
 
   filesPanel.innerHTML = "";
 
+  // "Only md" filter checkbox
+  const filterRow = document.createElement("div");
+  filterRow.className = "files-filter";
+  const filterCb = document.createElement("input");
+  filterCb.type = "checkbox";
+  filterCb.id = "files-md-only";
+  filterCb.checked = localStorage.getItem("filesMdOnly") === "true";
+  const filterLabel = document.createElement("label");
+  filterLabel.htmlFor = "files-md-only";
+  filterLabel.textContent = "仅 .md";
+  filterRow.append(filterCb, filterLabel);
+  filterCb.addEventListener("change", () => {
+    localStorage.setItem("filesMdOnly", String(filterCb.checked));
+    void renderFiles(listing.dir);
+  });
+  filesPanel.appendChild(filterRow);
+
   // Editable full-path bar — type a folder and press Enter to jump there.
   const pathInput = document.createElement("input");
   pathInput.className = "files-path";
@@ -1247,6 +1268,9 @@ async function renderFiles(dir: string | null): Promise<void> {
     );
   }
   for (const entry of listing.entries) {
+    // Apply .md-only filter (still show all folders for navigation)
+    const mdOnly = localStorage.getItem("filesMdOnly") === "true";
+    if (mdOnly && !entry.is_dir && !/\.(md|markdown)$/i.test(entry.name)) continue;
     if (entry.is_dir) {
       filesPanel.appendChild(
         fileRow(entry.name, "📁", () => void renderFiles(entry.path)),
@@ -1258,6 +1282,24 @@ async function renderFiles(dir: string | null): Promise<void> {
           onContext: (ev) => showFileMenu(ev, entry.path),
         }),
       );
+    }
+  }
+
+  // Bottom: recent files history
+  const recents = getRecents().filter(p => p !== currentPath).slice(0, 6);
+  if (recents.length > 0) {
+    const sep = document.createElement("div");
+    sep.className = "files-sep";
+    filesPanel.appendChild(sep);
+    const rh = document.createElement("div");
+    rh.className = "files-head";
+    rh.textContent = "最近打开";
+    filesPanel.appendChild(rh);
+    for (const p of recents) {
+      const name = p.split(/[\\/]/).pop() ?? p;
+      const a = fileRow(name, "📄", () => void openFile(p));
+      a.title = p;
+      filesPanel.appendChild(a);
     }
   }
 }
@@ -1528,9 +1570,9 @@ async function refreshMonitorWidth(): Promise<void> {
 async function setupWindowSize(): Promise<void> {
   await refreshMonitorWidth();
 
-  // Restore the last size on launch.
+  // Restore the last size on launch (skip if already maximized).
   const saved = loadWinSize();
-  if (saved) {
+  if (saved && !(await appWindow.isMaximized())) {
     try {
       await appWindow.setSize(new PhysicalSize(saved.width, saved.height));
     } catch {
@@ -1550,15 +1592,17 @@ async function setupWindowSize(): Promise<void> {
     winSaveTimer = window.setTimeout(() => saveWinSize(width, height), 300);
   });
 
-  // On regaining focus (e.g. switching back to this Space), restore the saved
-  // size and briefly suppress saving so the OS resize can't overwrite it.
+  // On regaining focus, restore the saved size only if the window isn't
+  // maximized (prevents shrinking from fullscreen on alt-tab).
   await appWindow.onFocusChanged(({ payload: focused }) => {
     if (!focused) return;
-    void refreshMonitorWidth();
-    const s = loadWinSize();
-    if (!s) return;
-    suppressWinSaveUntil = Date.now() + 600;
-    void appWindow.setSize(new PhysicalSize(s.width, s.height));
+    void refreshMonitorWidth().then(async () => {
+      if (await appWindow.isMaximized()) return;
+      const s = loadWinSize();
+      if (!s) return;
+      suppressWinSaveUntil = Date.now() + 600;
+      void appWindow.setSize(new PhysicalSize(s.width, s.height));
+    });
   });
 }
 

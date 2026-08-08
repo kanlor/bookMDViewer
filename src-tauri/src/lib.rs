@@ -14,6 +14,12 @@ struct FileMeta {
 }
 
 #[derive(Serialize)]
+struct MdContent {
+    text: String,
+    encoding: String,
+}
+
+#[derive(Serialize)]
 struct DirEntry {
     name: String,
     path: String,
@@ -145,25 +151,25 @@ fn get_initial_path(state: State<AppState>) -> Option<String> {
         .map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Read a markdown file's raw text.
+/// Read a markdown file's raw text and return the content + encoding used.
 /// Tries UTF-8 first, then falls back to common ANSI encodings (GBK, Big5, etc.)
 /// so files saved by Notepad in "ANSI" mode open without errors.
 #[tauri::command]
-fn read_md(path: String) -> Result<String, String> {
+fn read_md(path: String) -> Result<MdContent, String> {
     let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read {path}: {e}"))?;
     if let Ok(s) = String::from_utf8(bytes.clone()) {
-        return Ok(s);
+        return Ok(MdContent { text: s, encoding: "UTF-8".into() });
     }
     // Fallback: try common locale encodings, then use lossy UTF-8 as last resort.
     for label in &["gbk", "big5", "shift_jis", "euc-kr", "windows-1252"] {
         if let Some(enc) = encoding_rs::Encoding::for_label_no_replacement(label.as_bytes()) {
             let (cow, _enc_used, had_err) = enc.decode(&bytes);
             if !had_err {
-                return Ok(cow.into_owned());
+                return Ok(MdContent { text: cow.into_owned(), encoding: label.to_uppercase() });
             }
         }
     }
-    Ok(String::from_utf8_lossy(&bytes).into_owned())
+    Ok(MdContent { text: String::from_utf8_lossy(&bytes).into_owned(), encoding: "unknown".into() })
 }
 
 /// Open a file in a brand-new application window (spawns another instance).

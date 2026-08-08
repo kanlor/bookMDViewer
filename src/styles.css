@@ -129,6 +129,26 @@ body {
 #layout.files-open #files {
   display: block;
 }
+.files-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 6px;
+}
+.files-filter input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.files-filter label {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.files-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 10px 4px;
+}
 .files-head {
   padding: 4px 10px 8px;
   font-size: 12px;
