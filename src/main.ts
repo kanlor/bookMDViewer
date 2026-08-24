@@ -1677,15 +1677,33 @@ window.addEventListener("keydown", (ev) => {
 // ---------- Format shortcuts (headings / paragraph / lists) ----------
 // Apply or toggle a Markdown prefix on the current line(s) of the source.
 // Works in source mode (cursor in editor) and live mode (edits the buffer).
-const FMT_PREFIXES: Record<string, string> = {
-  h1: "# ",
-  h2: "## ",
-  h3: "### ",
-  h4: "#### ",
-  h5: "##### ",
-  para: "",
-  ol: "1. ",
-  ul: "- ",
+// "block" formats prefix the current line(s); "inline" formats wrap the
+// selection (or insert a template when nothing is selected).
+interface FmtDef {
+  prefix?: string; // block prefix, or "" for special-cased formats
+  inline?: {
+    before: string;
+    after: string;
+    placeholder?: string;
+  };
+}
+const FMT_DEFS: Record<string, FmtDef> = {
+  h1: { prefix: "# " },
+  h2: { prefix: "## " },
+  h3: { prefix: "### " },
+  h4: { prefix: "#### " },
+  h5: { prefix: "##### " },
+  para: { prefix: "" },
+  ol: { prefix: "1. " },
+  ul: { prefix: "- " },
+  blockquote: { prefix: "> " },
+  codeblock: { prefix: "```" },
+  hr: { prefix: "---" },
+  bold: { inline: { before: "**", after: "**", placeholder: "粗体文字" } },
+  italic: { inline: { before: "*", after: "*", placeholder: "斜体文字" } },
+  code: { inline: { before: "`", after: "`", placeholder: "代码" } },
+  link: { inline: { before: "[", after: "](url)", placeholder: "链接文字" } },
+  image: { inline: { before: "![", after: "](url)", placeholder: "图片说明" } },
 };
 
 function applyFormatOnLine(text: string, prefix: string, lineStart: number): {
@@ -1699,9 +1717,17 @@ function applyFormatOnLine(text: string, prefix: string, lineStart: number): {
   const leading = line.match(/^(\s*)/)?.[1] ?? "";
   const content = line.slice(leading.length);
   if (prefix === "") {
-    // Paragraph: strip any single heading/list prefix already present.
-    const stripped = content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+)/, "");
+    // Paragraph: strip any single heading/list/quote prefix already present.
+    const stripped = content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, "");
     return { text: text.slice(0, lineStart) + leading + stripped + text.slice(end), delta: 0 };
+  }
+  // Code block: wrap/unwrap the whole line (or selection) in ``` fences.
+  if (prefix === "```") {
+    const isFenced = /^```/.test(content);
+    if (isFenced) {
+      return { text: text.slice(0, lineStart) + leading + content.replace(/^```\s*/, "") + text.slice(end), delta: -4 };
+    }
+    return { text: text.slice(0, lineStart) + leading + "```\n" + content + "\n```" + text.slice(end), delta: 4 };
   }
   // Toggle: if the line already starts with this prefix, remove it.
   const stripRe = prefix === "1. " ? /^\d+\.\s+/ : prefix === "- " ? /^[-*+]\s+/ : new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
@@ -1719,44 +1745,90 @@ function applyFormat(fmt: string): void {
     toast("未打开文件");
     return;
   }
-  const prefix = FMT_PREFIXES[fmt];
-  if (prefix === undefined) return;
+  const def = FMT_DEFS[fmt];
+  if (!def) return;
   const ta = editor;
   const start = ta.selectionStart;
   const end = ta.selectionEnd;
-  // Multi-line selection: apply to every line in the selection.
   const src = ta.value;
-  if (start === end) {
-    const lineStart = src.lastIndexOf("\n", start - 1) + 1;
+
+  // Inline formats wrap the selection (or insert a placeholder).
+  if (def.inline) {
+    const { before, after, placeholder } = def.inline;
+    const selected = src.slice(start, end);
+    let newText: string;
+    let selStart: number;
+    let selEnd: number;
+    if (selected) {
+      // Toggle: if already wrapped, unwrap.
+      if (selected.startsWith(before) && selected.endsWith(after)) {
+        newText = src.slice(0, start) + selected.slice(before.length, selected.length - after.length) + src.slice(end);
+        selStart = start;
+        selEnd = end - before.length - after.length;
+      } else {
+        newText = src.slice(0, start) + before + selected + after + src.slice(end);
+        selStart = start + before.length;
+        selEnd = end + before.length;
+      }
+    } else {
+      // No selection: insert template with the placeholder selected.
+      const ph = placeholder ?? "";
+      newText = src.slice(0, start) + before + ph + after + src.slice(end);
+      selStart = start + before.length;
+      selEnd = selStart + ph.length;
+    }
+    ta.value = newText;
+    ta.setSelectionRange(selStart, selEnd);
+    currentText = newText;
+    dirty = true;
+    setTitle();
+    if (viewMode === "source" || viewMode === "live") {
+      schedulePreview();
+    } else {
+      void renderMarkdown(newText, true);
+    }
+    return;
+  }
+
+  const prefix = def.prefix!;
+  const ta2 = editor;
+  const start2 = ta2.selectionStart;
+  const end2 = ta2.selectionEnd;
+  if (start2 === end2) {
+    const lineStart = src.lastIndexOf("\n", start2 - 1) + 1;
     const r = applyFormatOnLine(src, prefix, lineStart);
-    ta.value = r.text;
-    // Keep caret roughly in place.
-    const newPos = start + (start === lineStart ? r.delta : r.delta);
-    ta.setSelectionRange(newPos, newPos);
+    ta2.value = r.text;
+    const newPos = start2 + r.delta;
+    ta2.setSelectionRange(newPos, newPos);
   } else {
     // Apply to each selected line.
-    const selStartLine = src.lastIndexOf("\n", start - 1) + 1;
-    const selEnd = src.indexOf("\n", end);
+    const selStartLine = src.lastIndexOf("\n", start2 - 1) + 1;
+    const selEnd = src.indexOf("\n", end2);
     const lastLineEnd = selEnd === -1 ? src.length : selEnd;
     const lines = src.slice(selStartLine, lastLineEnd).split("\n");
     const processed = lines.map((l) => {
       const leading = l.match(/^(\s*)/)?.[1] ?? "";
       const content = l.slice(leading.length);
-      if (prefix === "") return leading + content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+)/, "");
+      if (prefix === "") return leading + content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, "");
+      if (prefix === "```") {
+        return /^```/.test(content)
+          ? leading + content.replace(/^```\s*/, "")
+          : leading + "```\n" + content + "\n```";
+      }
       const stripRe = prefix === "1. " ? /^\d+\.\s+/ : prefix === "- " ? /^[-*+]\s+/ : new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
       if (stripRe.test(content)) return leading + content.replace(stripRe, "");
       return leading + prefix + content;
     });
-    ta.value = src.slice(0, selStartLine) + processed.join("\n") + src.slice(lastLineEnd);
-    ta.setSelectionRange(selStartLine, selStartLine + processed.join("\n").length);
+    ta2.value = src.slice(0, selStartLine) + processed.join("\n") + src.slice(lastLineEnd);
+    ta2.setSelectionRange(selStartLine, selStartLine + processed.join("\n").length);
   }
-  currentText = ta.value;
+  currentText = ta2.value;
   dirty = true;
   setTitle();
   if (viewMode === "source" || viewMode === "live") {
     schedulePreview();
   } else {
-    void renderMarkdown(ta.value, true);
+    void renderMarkdown(ta2.value, true);
   }
 }
 
@@ -1769,21 +1841,40 @@ function applyFormat(fmt: string): void {
 (document.getElementById("fmt-para") as HTMLButtonElement).addEventListener("click", () => applyFormat("para"));
 (document.getElementById("fmt-ol") as HTMLButtonElement).addEventListener("click", () => applyFormat("ol"));
 (document.getElementById("fmt-ul") as HTMLButtonElement).addEventListener("click", () => applyFormat("ul"));
+(document.getElementById("fmt-blockquote") as HTMLButtonElement).addEventListener("click", () => applyFormat("blockquote"));
+(document.getElementById("fmt-codeblock") as HTMLButtonElement).addEventListener("click", () => applyFormat("codeblock"));
+(document.getElementById("fmt-hr") as HTMLButtonElement).addEventListener("click", () => applyFormat("hr"));
+(document.getElementById("fmt-bold") as HTMLButtonElement).addEventListener("click", () => applyFormat("bold"));
+(document.getElementById("fmt-italic") as HTMLButtonElement).addEventListener("click", () => applyFormat("italic"));
+(document.getElementById("fmt-code") as HTMLButtonElement).addEventListener("click", () => applyFormat("code"));
+(document.getElementById("fmt-link") as HTMLButtonElement).addEventListener("click", () => applyFormat("link"));
+(document.getElementById("fmt-image") as HTMLButtonElement).addEventListener("click", () => applyFormat("image"));
 
-// Keyboard shortcuts: Ctrl+1..5 headings, Ctrl+` paragraph, Alt+1 ordered, Alt+2 unordered.
+// Keyboard shortcuts:
+//   Ctrl+1..5 headings, Ctrl+` paragraph, Ctrl+B bold, Ctrl+I italic
+//   Alt+1 ordered, Alt+2 unordered, Alt+3 code block, Alt+4 image,
+//   Alt+5 blockquote, Alt+6 link, Alt+7 horizontal rule, Alt+` inline code
 window.addEventListener("keydown", (ev) => {
   const fmtKey = (() => {
     if (ev.ctrlKey && !ev.altKey) {
       if (ev.key >= "1" && ev.key <= "5") return "h" + ev.key;
       if (ev.key === "`") return "para";
+      if (ev.key === "b" || ev.key === "B") return "bold";
+      if (ev.key === "i" || ev.key === "I") return "italic";
     }
     if (ev.altKey && !ev.ctrlKey) {
       if (ev.key === "1") return "ol";
       if (ev.key === "2") return "ul";
+      if (ev.key === "3") return "codeblock";
+      if (ev.key === "4") return "image";
+      if (ev.key === "5") return "blockquote";
+      if (ev.key === "6") return "link";
+      if (ev.key === "7") return "hr";
+      if (ev.key === "`") return "code";
     }
     return null;
   })();
-  if (fmtKey && FMT_PREFIXES[fmtKey] !== undefined) {
+  if (fmtKey && FMT_DEFS[fmtKey] !== undefined) {
     ev.preventDefault();
     applyFormat(fmtKey);
   }
