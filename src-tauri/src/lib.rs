@@ -33,7 +33,7 @@ struct DirListing {
     entries: Vec<DirEntry>,
 }
 
-/// List sub-folders and Markdown files in a directory (for the file explorer).
+/// List sub-folders and files in a directory (for the file explorer).
 /// If `path` is a file, its parent directory is listed.
 #[tauri::command]
 fn list_dir(path: String) -> Result<DirListing, String> {
@@ -52,11 +52,9 @@ fn list_dir(path: String) -> Result<DirListing, String> {
         }
         let ep = entry.path();
         let is_dir = ep.is_dir();
-        let is_md = ep
-            .extension()
-            .map(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown"))
-            .unwrap_or(false);
-        if is_dir || is_md {
+        // The frontend decides which file types to show via its filter toggle,
+        // so list every non-hidden file here.
+        if is_dir || ep.is_file() {
             entries.push(DirEntry {
                 name,
                 path: ep.to_string_lossy().into_owned(),
@@ -105,13 +103,22 @@ fn route_open(app: &tauri::AppHandle, state: &AppState, path: String) {
     }
 }
 
-/// Pull a markdown file path out of the process arguments (set when the OS
-/// launches us via a `.md` file association on Windows / Linux).
+/// Pull a markdown/text file path out of the process arguments (set when the OS
+/// launches us via a `.md` / `.txt` file association on Windows / Linux).
 fn path_from_args() -> Option<PathBuf> {
     std::env::args_os()
         .skip(1)
         .map(PathBuf::from)
-        .find(|p| p.extension().map(|e| e.eq_ignore_ascii_case("md")).unwrap_or(false) && p.exists())
+        .find(|p| {
+            p.extension()
+                .map(|e| {
+                    e.eq_ignore_ascii_case("md")
+                        || e.eq_ignore_ascii_case("markdown")
+                        || e.eq_ignore_ascii_case("txt")
+                })
+                .unwrap_or(false)
+                && p.exists()
+        })
 }
 
 /// Whether the app was launched with `--edit` (open straight into edit mode).

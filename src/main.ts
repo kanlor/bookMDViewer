@@ -91,7 +91,7 @@ const sbOutlineEl = document.getElementById("sb-outline") as HTMLElement;
 const sbStatsEl = document.getElementById("sb-stats") as HTMLElement;
 const sbFileinfoEl = document.getElementById("sb-fileinfo") as HTMLElement;
 const EMPTY_STATE_HTML = `<div class="empty-state">
-  <h1>KanlorOne MarkDownViewer</h1>
+  <h1>KanlorOne MDViewer</h1>
   <p>拖放 <code>.md</code> 文件到此处，或 <a id="empty-open" href="#">打开文件</a>。</p>
   <p class="app-version"><a id="about-open" href="#">关于 / About</a></p>
   <div id="recent-list"></div>
@@ -504,8 +504,8 @@ function makeContentEditable(): void {
 }
 
 function setTitle(): void {
-  const name = currentPath?.split(/[\\/]/).pop() ?? "KanlorOne MarkDownViewer";
-  document.title = `${dirty ? "● " : ""}${name} — KanlorOne MarkDownViewer`;
+  const name = currentPath?.split(/[\\/]/).pop() ?? "KanlorOne MDViewer";
+  document.title = `${dirty ? "● " : ""}${name} — KanlorOne MDViewer`;
   saveBtn.hidden = viewMode === "read";
   saveBtn.disabled = !dirty;
   saveBtn.textContent = dirty ? "💾 保存*" : "💾 已保存";
@@ -751,7 +751,7 @@ function buildExportHtml(): string {
     tocHtml = `<nav class="toc">\n${items}\n</nav>\n`;
   }
 
-  const title = currentPath?.split(/[\\/]/).pop()?.replace(/\.(md|markdown)$/i, "") ?? "Document";
+  const title = currentPath?.split(/[\\/]/).pop()?.replace(/\.(md|markdown|txt)$/i, "") ?? "Document";
   const themeCss = currentDark() ? hljsDarkCss : hljsLightCss;
 
   return `<!doctype html>
@@ -779,7 +779,7 @@ async function exportHtml(): Promise<void> {
   // Make sure the preview reflects the latest source (e.g. while editing).
   if (viewMode === "source") await renderMarkdown(editor.value, true);
 
-  const base = currentPath.replace(/\.(md|markdown)$/i, "");
+  const base = currentPath.replace(/\.(md|markdown|txt)$/i, "");
   const out = `${base}.html`;
   try {
     await invoke("write_md", { path: out, content: buildExportHtml() });
@@ -1136,23 +1136,19 @@ async function checkUpdate(): Promise<void> {
 }
 updateCheckBtn.addEventListener("click", () => void checkUpdate());
 
-// ---------- About dialog (version info) ----------
-const REPO_URL = "https://github.com/craig7351/bookMDViewer";
+// ---------- About dialog (version info + QR codes) ----------
 const aboutModal = document.getElementById("about-modal") as HTMLElement;
 const aboutVersion = document.getElementById("about-version") as HTMLElement;
 aboutVersion.textContent = `v${__APP_VERSION__}`;
 document.getElementById("about-close")?.addEventListener("click", () => {
   aboutModal.hidden = true;
 });
-document.getElementById("about-github")?.addEventListener("click", () => {
-  void openUrl(REPO_URL);
-});
 
 // ---------- Open file dialog + recent files ----------
 async function openViaDialog(): Promise<void> {
   const selected = await openDialog({
     multiple: false,
-    filters: [{ name: "KanlorOne MarkDownViewer", extensions: ["md", "markdown"] }],
+    filters: [{ name: "KanlorOne MDViewer", extensions: ["md", "markdown", "txt"] }],
   });
   if (typeof selected === "string") await openFile(selected);
 }
@@ -1310,7 +1306,7 @@ async function renderFiles(dir: string | null): Promise<void> {
   filterCb.checked = localStorage.getItem("filesMdOnly") === "true";
   const filterLabel = document.createElement("label");
   filterLabel.htmlFor = "files-md-only";
-  filterLabel.textContent = "仅 .md";
+  filterLabel.textContent = "仅文本(md/txt)";
   filterRow.append(filterCb, filterLabel);
   filterCb.addEventListener("change", () => {
     localStorage.setItem("filesMdOnly", String(filterCb.checked));
@@ -1344,17 +1340,23 @@ async function renderFiles(dir: string | null): Promise<void> {
     );
   }
   for (const entry of listing.entries) {
-    // Apply .md-only filter (still show all folders for navigation)
+    // Apply text-only filter (show md/txt, hide other file types).
     const mdOnly = localStorage.getItem("filesMdOnly") === "true";
-    if (mdOnly && !entry.is_dir && !/\.(md|markdown)$/i.test(entry.name)) continue;
+    if (mdOnly && !entry.is_dir && !/\.(md|markdown|txt)$/i.test(entry.name)) continue;
     if (entry.is_dir) {
       filesPanel.appendChild(
         fileRow(entry.name, "📁", () => void renderFiles(entry.path)),
       );
     } else {
+      const isText = /\.(md|markdown|txt)$/i.test(entry.name);
+      const icon = isText ? "📄" : "🗎";
+      const onClick = isText
+        ? () => switchToFile(entry.path)
+        : () => toast(`暂不支持打开 ${entry.name}`);
       filesPanel.appendChild(
-        fileRow(entry.name, "📄", () => switchToFile(entry.path), {
+        fileRow(entry.name, icon, onClick, {
           active: entry.path === currentPath,
+          muted: !isText,
           onContext: (ev) => showFileMenu(ev, entry.path),
         }),
       );
@@ -1876,10 +1878,10 @@ async function init(): Promise<void> {
     void openFile(ev.payload);
   });
 
-  // Drag-and-drop a .md file onto the window.
+  // Drag-and-drop a .md / .txt file onto the window.
   await getCurrentWebview().onDragDropEvent((ev) => {
     if (ev.payload.type === "drop") {
-      const file = ev.payload.paths.find((p) => /\.(md|markdown)$/i.test(p));
+      const file = ev.payload.paths.find((p) => /\.(md|markdown|txt)$/i.test(p));
       if (file) {
         void openFile(file);
       }

@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "KanlorOne-MarkDownViewer"
+name = "KanlorOne_MDViewer"
 version = "1.2.1"
 dependencies = [
  "encoding_rs",

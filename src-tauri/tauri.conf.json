@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "KanlorOne MarkDownViewer",
+  "productName": "KanlorOne MDViewer",
   "version": "1.2.1",
   "identifier": "com.kanlorone.markdownviewer",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "KanlorOne MarkDownViewer",
+        "title": "KanlorOne MDViewer",
         "width": 900,
         "height": 720,
         "minWidth": 400,
@@ -42,8 +42,8 @@
     "fileAssociations": [
       {
         "ext": ["md", "markdown"],
-        "name": "KanlorOne MarkDownViewer",
-        "description": "KanlorOne MarkDownViewer document",
+        "name": "KanlorOne MDViewer",
+        "description": "KanlorOne MDViewer document",
         "role": "Viewer"
       }
     ]
