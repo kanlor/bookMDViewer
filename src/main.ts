@@ -101,7 +101,8 @@ let pendingSwitchPath: string | null = null;
 let currentPath: string | null = null;
 let currentText = "";
 let currentEncoding = "";
-let editMode = false;
+type ViewMode = "read" | "source" | "live";
+let viewMode: ViewMode = "read";
 let dirty = false;
 let suppressReloadUntil = 0;
 let spy: IntersectionObserver | null = null;
@@ -453,13 +454,59 @@ async function renderMarkdown(
 
   // New documents start at the top; only hot-reload / live-edit keep position.
   content.scrollTop = preserveScroll ? scrollTop : 0;
+  if (viewMode === "live") makeContentEditable();
   void updateStatusBar();
+}
+
+// Live (WYSIWYG) mode: make the rendered article contenteditable and push edits
+// back to the markdown source via turndown.
+let td: unknown = null;
+async function getTurndown(): Promise<{ turndown: (html: string) => string }> {
+  if (!td) td = (await import("turndown")).default;
+  const T = td as new () => { turndown: (html: string) => string };
+  return new T();
+}
+let liveBound = false;
+function makeContentEditable(): void {
+  content.contentEditable = "true";
+  // Avoid triggering edit on our own injected UI (copy buttons, resizers).
+  content.querySelectorAll(".copy-btn, .col-resizer, .mermaid-zoomable").forEach(
+    (el) => (el as HTMLElement).contentEditable = "false",
+  );
+  if (liveBound) return;
+  liveBound = true;
+  content.addEventListener(
+    "input",
+    () => {
+      if (viewMode !== "live") return;
+      // Debounced round-trip: HTML -> Markdown -> currentText/editor buffer.
+      window.clearTimeout((content as unknown as { _liveTimer?: number })._liveTimer);
+      (content as unknown as { _liveTimer?: number })._liveTimer = window.setTimeout(
+        async () => {
+          const T = await getTurndown();
+          // Strip injected UI (front-matter card, copy buttons, col resizers,
+          // find highlights, diagram lightbox hooks) before converting back.
+          const clone = content.cloneNode(true) as HTMLElement;
+          clone.querySelectorAll(".fm-card, .copy-btn, .col-resizer, .fm-mark, .mermaid-zoomable").forEach(
+            (el) => el.remove(),
+          );
+          const mdText = T.turndown(clone.innerHTML);
+          currentText = mdText;
+          editor.value = mdText;
+          dirty = true;
+          setTitle();
+        },
+        250,
+      );
+    },
+    { passive: true },
+  );
 }
 
 function setTitle(): void {
   const name = currentPath?.split(/[\\/]/).pop() ?? "KanlorOne MarkDownViewer";
   document.title = `${dirty ? "● " : ""}${name} — KanlorOne MarkDownViewer`;
-  saveBtn.hidden = !editMode;
+  saveBtn.hidden = viewMode === "read";
   saveBtn.disabled = !dirty;
   saveBtn.textContent = dirty ? "💾 保存*" : "💾 已保存";
   closeDocBtn.hidden = !currentPath;
@@ -514,10 +561,8 @@ function goHome(): void {
   currentText = "";
   currentEncoding = "";
   dirty = false;
-  if (editMode) {
-    editMode = false;
-    layout.classList.remove("mode-edit");
-    editToggle.textContent = "✎ 编辑";
+  if (viewMode !== "read") {
+    setViewMode("read");
   }
   content.innerHTML = EMPTY_STATE_HTML;
   buildToc();
@@ -539,7 +584,7 @@ async function openFile(
     currentEncoding = result.encoding;
     dirty = false;
     addRecent(path);
-    if (editMode) editor.value = result.text;
+    if (viewMode !== "read") editor.value = result.text;
     setTitle();
     await renderMarkdown(result.text, preserveScroll);
     if (watch) {
@@ -565,25 +610,55 @@ function schedulePreview(): void {
   );
 }
 
-function setEditMode(on: boolean): void {
-  editMode = on;
-  layout.classList.toggle("mode-edit", on);
-  editToggle.textContent = on ? "👁 预览" : "✎ 编辑";
-  if (on) {
-    // Only reload from the saved snapshot when there are no unsaved edits;
-    // otherwise entering edit mode would wipe the user's unsaved buffer
-    // (worst case: a freshly-opened empty file loses everything typed).
-    if (!dirty) editor.value = currentText;
+// Three display modes:
+//   read   — pure preview (rendered article only)
+//   source — split: source editor (left) + live preview (right)
+//   live   — single-pane WYSIWYG: rendered content is contenteditable, edits
+//            round-trip back to the markdown source via turndown
+const MODE_META: Record<ViewMode, { label: string; title: string }> = {
+  read: { label: "👁 阅读", title: "阅读模式（纯预览）" },
+  source: { label: "✎ 源码", title: "源码模式（左侧源码 + 右侧预览）" },
+  live: { label: "✏ 实时", title: "实时预览（点击内容即可编辑）" },
+};
+
+async function setViewMode(mode: ViewMode): Promise<void> {
+  const prev = viewMode;
+  // Leaving live mode: disable contenteditable.
+  if (prev === "live") {
+    content.contentEditable = "false";
+  }
+  viewMode = mode;
+  layout.classList.toggle("mode-edit", mode === "source");
+  layout.classList.toggle("mode-live", mode === "live");
+  editToggle.textContent = MODE_META[mode].label;
+  editToggle.title = MODE_META[mode].title;
+
+  if (mode === "source") {
+    // Sync the editor buffer with the latest source (preserve unsaved edits).
+    if (prev !== "source" && !dirty) editor.value = currentText;
     editor.focus();
+  } else if (mode === "live") {
+    // Re-render with contenteditable enabled and sync currentText from any
+    // source-mode edits.
+    if (prev === "source") currentText = editor.value;
+    makeContentEditable();
+    void renderMarkdown(currentText, true);
   } else {
-    // Leaving edit mode: render the latest source, keep position.
-    void renderMarkdown(editor.value, true);
+    // read: re-render from currentText (reflect source-mode edits).
+    if (prev === "source") currentText = editor.value;
+    void renderMarkdown(currentText, true);
   }
   setTitle();
 }
 
+function cycleViewMode(): void {
+  const order: ViewMode[] = ["read", "source", "live"];
+  const next = order[(order.indexOf(viewMode) + 1) % order.length];
+  void setViewMode(next);
+}
+
 function toggleEdit(): void {
-  setEditMode(!editMode);
+  cycleViewMode();
 }
 
 async function save(): Promise<void> {
@@ -702,7 +777,7 @@ async function exportHtml(): Promise<void> {
     return;
   }
   // Make sure the preview reflects the latest source (e.g. while editing).
-  if (editMode) await renderMarkdown(editor.value, true);
+  if (viewMode === "source") await renderMarkdown(editor.value, true);
 
   const base = currentPath.replace(/\.(md|markdown)$/i, "");
   const out = `${base}.html`;
@@ -719,7 +794,7 @@ exportBtn.addEventListener("click", () => void exportHtml());
 // ---------- Synced scrolling (editor <-> preview) ----------
 let syncing = false;
 function syncScroll(from: HTMLElement, to: HTMLElement): void {
-  if (syncing || !editMode) return;
+  if (syncing || viewMode !== "source") return;
   syncing = true;
   const max = from.scrollHeight - from.clientHeight;
   const ratio = max > 0 ? from.scrollTop / max : 0;
@@ -828,7 +903,7 @@ function applyTheme(): void {
   // Re-render the open document so mermaid diagrams pick up the new theme
   // (highlighted code recolors automatically via the swapped <style>).
   if (currentPath) {
-    void renderMarkdown(editMode ? editor.value : currentText, true);
+    void renderMarkdown(viewMode === "source" ? editor.value : currentText, true);
   }
 }
 function cycleTheme(): void {
@@ -1547,8 +1622,7 @@ function runReplaceOne(): void {
   if (!findQuery || findMatches.length === 0 || findCurrent < 0) return;
   const repl = replaceInput.value;
   const idx = findCurrent;
-  // Replace in the source text (editor buffer if in edit mode, else currentText).
-  const source = editMode ? editor.value : currentText;
+  const source = currentText;
   const lower = findQuery.toLowerCase();
   // Find the Nth occurrence in the source to replace exactly the highlighted one.
   let pos = -1;
@@ -1562,10 +1636,10 @@ function runReplaceOne(): void {
   editor.value = newSource; // keep the editor buffer in sync so save() works
   dirty = true;
   setTitle();
-  if (editMode) schedulePreview();
+  if (viewMode === "source") schedulePreview();
   // Re-scan after replacement.
   findQuery = "";
-  void renderMarkdown(editMode ? editor.value : currentText, true).then(() => {
+  void renderMarkdown(currentText, true).then(() => {
     runFind(false);
   });
 }
@@ -1573,16 +1647,16 @@ function runReplaceOne(): void {
 function runReplaceAll(): void {
   if (!findQuery || findMatches.length === 0) return;
   const repl = replaceInput.value;
-  const source = editMode ? editor.value : currentText;
+  const source = currentText;
   const lower = findQuery.toLowerCase();
   const newSource = source.toLowerCase().split(lower).join(repl);
   currentText = newSource;
   editor.value = newSource; // keep the editor buffer in sync so save() works
   dirty = true;
   setTitle();
-  if (editMode) schedulePreview();
+  if (viewMode === "source") schedulePreview();
   findQuery = "";
-  void renderMarkdown(editMode ? editor.value : currentText, true).then(() => {
+  void renderMarkdown(currentText, true).then(() => {
     runFind(false);
   });
 }
@@ -1653,6 +1727,29 @@ window.addEventListener("keydown", (ev) => {
     closeSettings();
   } else if (ev.key === "Escape" && !findBar.hidden) {
     closeFind();
+  }
+});
+
+// Smart Ctrl+A: in read/live mode, or when focus is outside the source editor,
+// select the entire rendered article (so Ctrl+C into Word keeps heading/table/
+// list styles). Inside the source editor it keeps the default select-all.
+window.addEventListener("keydown", (ev) => {
+  if (ev.ctrlKey && (ev.key === "a" || ev.key === "A")) {
+    const active = document.activeElement;
+    const inEditor = active === editor;
+    const inInput =
+      active === findInput ||
+      active === replaceInput ||
+      (active as HTMLElement | null)?.isContentEditable;
+    if (inEditor || inInput) return; // let the browser select the field's own text
+    ev.preventDefault();
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    const sel = window.getSelection();
+    if (sel) {
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
   }
 });
 
@@ -1769,7 +1866,7 @@ async function init(): Promise<void> {
   // Hot reload when the watched file changes on disk. Skip while editing or
   // when the change came from our own save.
   await listen<string>("md-changed", () => {
-    if (currentPath && !editMode && Date.now() > suppressReloadUntil) {
+    if (currentPath && viewMode === "read" && Date.now() > suppressReloadUntil) {
       void openFile(currentPath, false, true);
     }
   });
@@ -1802,6 +1899,10 @@ async function init(): Promise<void> {
   // requests that arrived during cold start (fixes macOS first-open blank).
   await invoke("frontend_ready");
 
+  // Sync the mode button label with the initial (read) mode.
+  editToggle.textContent = MODE_META[viewMode].label;
+  editToggle.title = MODE_META[viewMode].title;
+
   // Populate the empty-state recent-files list.
   renderRecents();
 
@@ -1812,9 +1913,9 @@ async function init(): Promise<void> {
   const initial = await invoke<string | null>("get_initial_path");
   if (initial) {
     await openFile(initial);
-    // Optional `--edit` flag opens straight into edit mode.
+    // Optional `--edit` flag opens straight into source (split) mode.
     if (await invoke<boolean>("start_in_edit")) {
-      setEditMode(true);
+      await setViewMode("source");
     }
   }
 

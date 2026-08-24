@@ -310,6 +310,23 @@ body {
   color: var(--accent);
 }
 
+/* Live (WYSIWYG) mode: single-pane editable preview */
+#layout.mode-live #editor {
+  display: none;
+}
+#layout.mode-live .markdown-body {
+  margin: 0;
+  max-width: 860px;
+  outline: none;
+}
+#layout.mode-live .markdown-body:focus-visible {
+  outline: none;
+}
+/* Subtle caret hint that live mode is editable */
+#layout.mode-live .markdown-body:hover {
+  cursor: text;
+}
+
 /* ---------- YAML front-matter card ---------- */
 .markdown-body .fm-card {
   margin: 0 0 2em;
@@ -380,8 +397,10 @@ body {
   z-index: 20;
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 4px;
-  padding: 5px 8px;
+  padding: 5px 10px;
+  max-width: calc(100vw - 20px);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -400,7 +419,7 @@ body {
   padding: 2px 4px;
 }
 #replace-input {
-  width: 140px;
+  width: 130px;
   border: 1px solid var(--border);
   border-radius: 5px;
   outline: none;
@@ -420,6 +439,7 @@ body {
   font-size: 12px;
   border: 1px solid var(--border);
   border-radius: 5px;
+  white-space: nowrap;
 }
 #replace-all {
   border-color: var(--accent);
