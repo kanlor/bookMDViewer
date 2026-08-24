@@ -61,6 +61,17 @@
       <span id="sb-fileinfo" class="sb-item" title="文件属性">--</span>
     </div>
 
+    <div id="format-bar" title="格式快捷键">
+      <button id="fmt-h1" title="标题1 (Ctrl+1)">H1</button>
+      <button id="fmt-h2" title="标题2 (Ctrl+2)">H2</button>
+      <button id="fmt-h3" title="标题3 (Ctrl+3)">H3</button>
+      <button id="fmt-h4" title="标题4 (Ctrl+4)">H4</button>
+      <button id="fmt-h5" title="标题5 (Ctrl+5)">H5</button>
+      <button id="fmt-para" title="正文 (Ctrl+`)">¶ 正文</button>
+      <button id="fmt-ol" title="有序列表 (Alt+1)">1. 有序</button>
+      <button id="fmt-ul" title="无序列表 (Alt+2)">• 无序</button>
+    </div>
+
     <div id="diagram-modal" hidden>
       <div id="diagram-toolbar">
         <button id="dg-zoomout" title="缩小">−</button>
@@ -90,14 +101,6 @@
           The quick brown fox — 敏捷的棕色狐狸 0123
         </p>
 
-        <div class="settings-sep"></div>
-        <div class="settings-title">软件更新 / Updates</div>
-        <div class="settings-row">
-          <span class="settings-ver">当前版本 <span id="update-current"></span></span>
-          <button id="update-check">检查更新</button>
-        </div>
-        <div class="update-status" id="update-status" hidden></div>
-
         <div class="modal-actions">
           <button id="settings-reset">重置字体</button>
           <button id="settings-close">关闭</button>
@@ -111,8 +114,8 @@
         <div class="about-name">KanlorOne MDViewer</div>
         <div class="about-ver" id="about-version"></div>
         <p class="about-desc">
-          轻量、完全本机、开源的 Markdown 查看器与编辑器。<br />
-          Lightweight, local-first, open-source Markdown viewer &amp; editor.
+          轻量、完全本机的 Markdown 查看器与编辑器。<br />
+          Lightweight, local-first Markdown viewer &amp; editor.
         </p>
         <div class="about-qr">
           <div class="qr-item">

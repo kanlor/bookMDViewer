@@ -1078,64 +1078,6 @@ settingsModal.addEventListener("click", (ev) => {
 });
 applyReadingFont();
 
-// ---------- Check for updates (GitHub latest release) ----------
-const updateCheckBtn = document.getElementById("update-check") as HTMLButtonElement;
-const updateStatus = document.getElementById("update-status") as HTMLElement;
-const updateCurrent = document.getElementById("update-current") as HTMLElement;
-updateCurrent.textContent = `v${__APP_VERSION__}`;
-
-// Compare dotted versions: >0 if a newer than b, <0 if older, 0 if equal.
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
-
-function showUpdateStatus(text: string, isNew = false, url?: string): void {
-  updateStatus.hidden = false;
-  updateStatus.classList.toggle("new", isNew);
-  updateStatus.textContent = text;
-  if (url) {
-    const a = document.createElement("a");
-    a.textContent = "前往下载";
-    a.href = "#";
-    a.addEventListener("click", (ev) => {
-      ev.preventDefault();
-      void openUrl(url);
-    });
-    updateStatus.append(" ", a);
-  }
-}
-
-async function checkUpdate(): Promise<void> {
-  updateCheckBtn.disabled = true;
-  showUpdateStatus("检查中…");
-  try {
-    const res = await fetch(
-      "https://api.github.com/repos/craig7351/bookMDViewer/releases/latest",
-      { headers: { Accept: "application/vnd.github+json" } },
-    );
-    if (!res.ok) throw new Error(String(res.status));
-    const data = (await res.json()) as { tag_name?: string; html_url?: string };
-    const latest = (data.tag_name ?? "").replace(/^v/, "");
-    if (!latest) throw new Error("no tag");
-    if (compareVersions(latest, __APP_VERSION__) > 0) {
-      showUpdateStatus(`发现新版 v${latest}`, true, data.html_url);
-    } else {
-      showUpdateStatus("已是最新版本 ✓");
-    }
-  } catch {
-    showUpdateStatus("无法检查更新(请确认网络)");
-  } finally {
-    updateCheckBtn.disabled = false;
-  }
-}
-updateCheckBtn.addEventListener("click", () => void checkUpdate());
-
 // ---------- About dialog (version info + QR codes) ----------
 const aboutModal = document.getElementById("about-modal") as HTMLElement;
 const aboutVersion = document.getElementById("about-version") as HTMLElement;
@@ -1729,6 +1671,121 @@ window.addEventListener("keydown", (ev) => {
     closeSettings();
   } else if (ev.key === "Escape" && !findBar.hidden) {
     closeFind();
+  }
+});
+
+// ---------- Format shortcuts (headings / paragraph / lists) ----------
+// Apply or toggle a Markdown prefix on the current line(s) of the source.
+// Works in source mode (cursor in editor) and live mode (edits the buffer).
+const FMT_PREFIXES: Record<string, string> = {
+  h1: "# ",
+  h2: "## ",
+  h3: "### ",
+  h4: "#### ",
+  h5: "##### ",
+  para: "",
+  ol: "1. ",
+  ul: "- ",
+};
+
+function applyFormatOnLine(text: string, prefix: string, lineStart: number): {
+  text: string;
+  delta: number;
+} {
+  // Read current line from the caret position.
+  const lineEnd = text.indexOf("\n", lineStart);
+  const end = lineEnd === -1 ? text.length : lineEnd;
+  const line = text.slice(lineStart, end);
+  const leading = line.match(/^(\s*)/)?.[1] ?? "";
+  const content = line.slice(leading.length);
+  if (prefix === "") {
+    // Paragraph: strip any single heading/list prefix already present.
+    const stripped = content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+)/, "");
+    return { text: text.slice(0, lineStart) + leading + stripped + text.slice(end), delta: 0 };
+  }
+  // Toggle: if the line already starts with this prefix, remove it.
+  const stripRe = prefix === "1. " ? /^\d+\.\s+/ : prefix === "- " ? /^[-*+]\s+/ : new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (stripRe.test(content)) {
+    const removed = content.replace(stripRe, "");
+    return { text: text.slice(0, lineStart) + leading + removed + text.slice(end), delta: -prefix.length };
+  }
+  // Otherwise prepend the prefix.
+  const inserted = leading + prefix + content;
+  return { text: text.slice(0, lineStart) + inserted + text.slice(end), delta: prefix.length };
+}
+
+function applyFormat(fmt: string): void {
+  if (!currentPath) {
+    toast("未打开文件");
+    return;
+  }
+  const prefix = FMT_PREFIXES[fmt];
+  if (prefix === undefined) return;
+  const ta = editor;
+  const start = ta.selectionStart;
+  const end = ta.selectionEnd;
+  // Multi-line selection: apply to every line in the selection.
+  const src = ta.value;
+  if (start === end) {
+    const lineStart = src.lastIndexOf("\n", start - 1) + 1;
+    const r = applyFormatOnLine(src, prefix, lineStart);
+    ta.value = r.text;
+    // Keep caret roughly in place.
+    const newPos = start + (start === lineStart ? r.delta : r.delta);
+    ta.setSelectionRange(newPos, newPos);
+  } else {
+    // Apply to each selected line.
+    const selStartLine = src.lastIndexOf("\n", start - 1) + 1;
+    const selEnd = src.indexOf("\n", end);
+    const lastLineEnd = selEnd === -1 ? src.length : selEnd;
+    const lines = src.slice(selStartLine, lastLineEnd).split("\n");
+    const processed = lines.map((l) => {
+      const leading = l.match(/^(\s*)/)?.[1] ?? "";
+      const content = l.slice(leading.length);
+      if (prefix === "") return leading + content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+)/, "");
+      const stripRe = prefix === "1. " ? /^\d+\.\s+/ : prefix === "- " ? /^[-*+]\s+/ : new RegExp("^" + prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      if (stripRe.test(content)) return leading + content.replace(stripRe, "");
+      return leading + prefix + content;
+    });
+    ta.value = src.slice(0, selStartLine) + processed.join("\n") + src.slice(lastLineEnd);
+    ta.setSelectionRange(selStartLine, selStartLine + processed.join("\n").length);
+  }
+  currentText = ta.value;
+  dirty = true;
+  setTitle();
+  if (viewMode === "source" || viewMode === "live") {
+    schedulePreview();
+  } else {
+    void renderMarkdown(ta.value, true);
+  }
+}
+
+// Bind the format buttons.
+(document.getElementById("fmt-h1") as HTMLButtonElement).addEventListener("click", () => applyFormat("h1"));
+(document.getElementById("fmt-h2") as HTMLButtonElement).addEventListener("click", () => applyFormat("h2"));
+(document.getElementById("fmt-h3") as HTMLButtonElement).addEventListener("click", () => applyFormat("h3"));
+(document.getElementById("fmt-h4") as HTMLButtonElement).addEventListener("click", () => applyFormat("h4"));
+(document.getElementById("fmt-h5") as HTMLButtonElement).addEventListener("click", () => applyFormat("h5"));
+(document.getElementById("fmt-para") as HTMLButtonElement).addEventListener("click", () => applyFormat("para"));
+(document.getElementById("fmt-ol") as HTMLButtonElement).addEventListener("click", () => applyFormat("ol"));
+(document.getElementById("fmt-ul") as HTMLButtonElement).addEventListener("click", () => applyFormat("ul"));
+
+// Keyboard shortcuts: Ctrl+1..5 headings, Ctrl+` paragraph, Alt+1 ordered, Alt+2 unordered.
+window.addEventListener("keydown", (ev) => {
+  const fmtKey = (() => {
+    if (ev.ctrlKey && !ev.altKey) {
+      if (ev.key >= "1" && ev.key <= "5") return "h" + ev.key;
+      if (ev.key === "`") return "para";
+    }
+    if (ev.altKey && !ev.ctrlKey) {
+      if (ev.key === "1") return "ol";
+      if (ev.key === "2") return "ul";
+    }
+    return null;
+  })();
+  if (fmtKey && FMT_PREFIXES[fmtKey] !== undefined) {
+    ev.preventDefault();
+    applyFormat(fmtKey);
   }
 });
 

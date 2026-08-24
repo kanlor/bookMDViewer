@@ -319,6 +319,10 @@ body {
   max-width: 860px;
   outline: none;
 }
+/* In live mode the wide-content toggle still applies (fill the width). */
+#layout.mode-live.wide-content .markdown-body {
+  max-width: none;
+}
 #layout.mode-live .markdown-body:focus-visible {
   outline: none;
 }
@@ -1105,4 +1109,31 @@ body.col-resizing * {
   padding: 0 8px;
   color: var(--border);
   font-size: 10px;
+}
+
+/* ---------- Format shortcut bar ---------- */
+#format-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 30px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--code-bg);
+  border-top: 1px solid var(--border);
+  user-select: none;
+}
+#format-bar button {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+#format-bar button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
