@@ -472,7 +472,12 @@ body {
 #recent-list {
   margin: 28px auto 0;
   max-width: 460px;
+  width: 100%;
   text-align: left;
+  /* Push the list to the bottom of the empty-state container so recent files
+     stay aligned to the bottom edge regardless of how many items there are. */
+  margin-top: auto;
+  padding-top: 28px;
 }
 #recent-list h3 {
   font-size: 13px;
@@ -856,11 +861,23 @@ body {
   word-wrap: break-word;
   font-size: calc(16px * var(--content-scale, 1));
 }
+/* In the empty state the huge bottom padding would push recent files off the
+   bottom, so drop it there and let the empty-state column fill the height. */
+.markdown-body:has(> .empty-state) {
+  padding-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 .empty-state {
   text-align: center;
   color: var(--muted);
-  margin-top: 18vh;
+  margin-top: 12vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-height: 0;
 }
 
 /* Find/replace highlight marks */
