@@ -391,13 +391,39 @@ body {
   display: none;
 }
 #find-input {
-  width: 200px;
+  width: 180px;
   border: none;
   outline: none;
   background: transparent;
   color: var(--fg);
   font-size: 14px;
   padding: 2px 4px;
+}
+#replace-input {
+  width: 140px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  outline: none;
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  padding: 3px 6px;
+  margin-left: 6px;
+}
+#replace-input:focus {
+  border-color: var(--accent);
+}
+#replace-one,
+#replace-all {
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+#replace-all {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 #find-count {
   font-size: 12px;
@@ -796,6 +822,23 @@ body {
   text-align: center;
   color: var(--muted);
   margin-top: 18vh;
+}
+
+/* Find/replace highlight marks */
+.markdown-body mark.fm-mark {
+  background: #ffd54f;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+:root[data-theme="dark"] .markdown-body mark.fm-mark {
+  background: #7a5d00;
+}
+.markdown-body mark.fm-current {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 .markdown-body h1,

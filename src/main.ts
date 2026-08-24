@@ -81,6 +81,7 @@ const filesPanel = document.getElementById("files") as HTMLElement;
 const findBar = document.getElementById("find-bar") as HTMLElement;
 const findInput = document.getElementById("find-input") as HTMLInputElement;
 const findCount = document.getElementById("find-count") as HTMLElement;
+const replaceInput = document.getElementById("replace-input") as HTMLInputElement;
 const closeModal = document.getElementById("close-modal") as HTMLElement;
 const closeDocBtn = document.getElementById("close-doc-btn") as HTMLButtonElement;
 const toastEl = document.getElementById("toast") as HTMLElement;
@@ -1420,7 +1421,20 @@ function dgCenterZoom(factor: number): void {
 (document.getElementById("dg-reset") as HTMLButtonElement).addEventListener("click", dgFit);
 (document.getElementById("dg-close") as HTMLButtonElement).addEventListener("click", closeDiagram);
 
-// ---------- Find in document (Ctrl+F) ----------
+// ---------- Find in document (Ctrl+F) + replace ----------
+// Custom find that highlights all matches in the DOM and never steals focus,
+// unlike window.find() which scrolls and blurs the input while typing.
+interface FindMatch {
+  el: Text;
+  start: number;
+  end: number;
+}
+let findMatches: FindMatch[] = [];
+let findCurrent = -1;
+let findQuery = "";
+const findMarkCls = "fm-mark"; // all-match highlight
+const findCurCls = "fm-current"; // current-match highlight
+
 function openFind(): void {
   findBar.hidden = false;
   findInput.focus();
@@ -1428,23 +1442,151 @@ function openFind(): void {
 }
 function closeFind(): void {
   findBar.hidden = true;
-  findCount.textContent = "";
-  window.getSelection()?.removeAllRanges();
+  clearHighlights();
 }
-function runFind(backwards: boolean): void {
+function clearHighlights(): void {
+  // Unwrap any <mark class="fm-mark"> we created back to plain text nodes.
+  const marks = content.querySelectorAll("mark.fm-mark");
+  marks.forEach((m) => {
+    const parent = m.parentNode;
+    if (!parent) return;
+    parent.replaceChild(document.createTextNode(m.textContent ?? ""), m);
+    parent.normalize();
+  });
+  findMatches = [];
+  findCurrent = -1;
+  findCount.textContent = "";
+}
+function unhighlightCurrent(): void {
+  const cur = content.querySelector(`mark.${findCurCls}`);
+  cur?.classList.remove(findCurCls);
+}
+
+function runFind(backwards: boolean, selectNew = true): void {
   const q = findInput.value;
   if (!q) {
-    findCount.textContent = "";
+    clearHighlights();
     return;
   }
-  // window.find(text, caseSensitive, backwards, wrapAround)
-  const found = (
-    window as unknown as {
-      find: (s: string, c: boolean, b: boolean, w: boolean) => boolean;
+  if (q !== findQuery) {
+    // Query changed: re-scan the document.
+    clearHighlights();
+    findQuery = q;
+    const walker = document.createTreeWalker(
+      content,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(n) {
+          // Skip text inside our own find marks / editor / script / style.
+          let p = n.parentElement;
+          while (p && p !== content) {
+            if (p.classList.contains("fm-mark") || p.tagName === "SCRIPT" || p.tagName === "STYLE") {
+              return NodeFilter.FILTER_REJECT;
+            }
+            p = p.parentElement;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      },
+    );
+    const lower = q.toLowerCase();
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const text = node.nodeValue ?? "";
+      const lowerText = text.toLowerCase();
+      let idx = lowerText.indexOf(lower);
+      while (idx !== -1) {
+        findMatches.push({ el: node as Text, start: idx, end: idx + q.length });
+        idx = lowerText.indexOf(lower, idx + q.length);
+      }
     }
-  ).find(q, false, backwards, true);
-  findCount.textContent = found ? "" : "无匹配";
+    // Wrap matches in <mark> elements. Group by text node and rebuild each node
+    // once so multiple matches inside the same node all highlight correctly.
+    const byNode = new Map<Text, FindMatch[]>();
+    for (const m of findMatches) {
+      const arr = byNode.get(m.el) ?? [];
+      arr.push(m);
+      byNode.set(m.el, arr);
+    }
+    for (const [node, ms] of byNode) {
+      const text = node.nodeValue ?? "";
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      for (const m of ms) {
+        if (m.start > last) frag.appendChild(document.createTextNode(text.slice(last, m.start)));
+        const mark = document.createElement("mark");
+        mark.className = findMarkCls;
+        mark.textContent = text.slice(m.start, m.end);
+        (m as unknown as { mark: HTMLElement }).mark = mark;
+        frag.appendChild(mark);
+        last = m.end;
+      }
+      if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode?.replaceChild(frag, node);
+    }
+    if (findMatches.length === 0) {
+      findCount.textContent = "0/0";
+      return;
+    }
+  }
+  if (findMatches.length === 0) return;
+  // Move to previous/next match.
+  if (selectNew) {
+    findCurrent = backwards
+      ? (findCurrent <= 0 ? findMatches.length - 1 : findCurrent - 1)
+      : (findCurrent < 0 ? 0 : (findCurrent + 1) % findMatches.length);
+  }
+  unhighlightCurrent();
+  const cur = (findMatches[findCurrent] as unknown as { mark?: HTMLElement }).mark;
+  cur?.classList.add(findCurCls);
+  cur?.scrollIntoView({ block: "center" });
+  findCount.textContent = `${findCurrent + 1}/${findMatches.length}`;
 }
+
+function runReplaceOne(): void {
+  if (!findQuery || findMatches.length === 0 || findCurrent < 0) return;
+  const repl = replaceInput.value;
+  const idx = findCurrent;
+  // Replace in the source text (editor buffer if in edit mode, else currentText).
+  const source = editMode ? editor.value : currentText;
+  const lower = findQuery.toLowerCase();
+  // Find the Nth occurrence in the source to replace exactly the highlighted one.
+  let pos = -1;
+  for (let i = 0; i <= idx; i++) {
+    pos = source.toLowerCase().indexOf(lower, pos + 1);
+    if (pos === -1) break;
+  }
+  if (pos === -1) return;
+  const newSource = source.slice(0, pos) + repl + source.slice(pos + findQuery.length);
+  currentText = newSource;
+  editor.value = newSource; // keep the editor buffer in sync so save() works
+  dirty = true;
+  setTitle();
+  if (editMode) schedulePreview();
+  // Re-scan after replacement.
+  findQuery = "";
+  void renderMarkdown(editMode ? editor.value : currentText, true).then(() => {
+    runFind(false);
+  });
+}
+
+function runReplaceAll(): void {
+  if (!findQuery || findMatches.length === 0) return;
+  const repl = replaceInput.value;
+  const source = editMode ? editor.value : currentText;
+  const lower = findQuery.toLowerCase();
+  const newSource = source.toLowerCase().split(lower).join(repl);
+  currentText = newSource;
+  editor.value = newSource; // keep the editor buffer in sync so save() works
+  dirty = true;
+  setTitle();
+  if (editMode) schedulePreview();
+  findQuery = "";
+  void renderMarkdown(editMode ? editor.value : currentText, true).then(() => {
+    runFind(false);
+  });
+}
+
 findInput.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") {
     ev.preventDefault();
@@ -1454,9 +1596,23 @@ findInput.addEventListener("keydown", (ev) => {
     closeFind();
   }
 });
+replaceInput.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    runReplaceOne();
+  } else if (ev.key === "Escape") {
+    ev.preventDefault();
+    closeFind();
+  }
+});
 findInput.addEventListener("input", () => runFind(false));
+replaceInput.addEventListener("input", () => {
+  // Re-render count (query may have changed the match count already handled by findInput).
+});
 (document.getElementById("find-next") as HTMLButtonElement).addEventListener("click", () => runFind(false));
 (document.getElementById("find-prev") as HTMLButtonElement).addEventListener("click", () => runFind(true));
+(document.getElementById("replace-one") as HTMLButtonElement).addEventListener("click", runReplaceOne);
+(document.getElementById("replace-all") as HTMLButtonElement).addEventListener("click", runReplaceAll);
 (document.getElementById("find-close") as HTMLButtonElement).addEventListener("click", closeFind);
 
 // Collapse / expand the outline.
