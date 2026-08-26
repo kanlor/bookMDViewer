@@ -58,10 +58,8 @@ const md: MarkdownIt = new MarkdownIt({
     lastFrontMatter = fm;
   });
 
-// Disable setext headings so `text` immediately above `---` / `===` stays a
-// paragraph + horizontal rule (the usual intent) instead of becoming a heading
-// that pollutes the outline.
-md.disable("lheading");
+// Keep setext headings (`Title` + `===`/`---` underline) enabled so documents
+// written with that syntax (common in other editors) parse their h1/h2 correctly.
 
 const content = document.getElementById("content") as HTMLElement;
 const toc = document.getElementById("toc") as HTMLElement;
@@ -698,6 +696,9 @@ async function setViewMode(mode: ViewMode): Promise<void> {
 
   if (mode === "source") {
     editor.value = currentText;
+    // Reset both panes to the top so the editor and preview start in sync.
+    editor.scrollTop = 0;
+    content.scrollTop = 0;
     editor.focus();
   } else if (mode === "live") {
     makeContentEditable();
@@ -855,9 +856,14 @@ let syncing = false;
 function syncScroll(from: HTMLElement, to: HTMLElement): void {
   if (syncing || viewMode !== "source") return;
   syncing = true;
+  // Exclude the preview's 80vh bottom padding from the scroll range so the
+  // content scrolls in step with the editor (which has no such padding).
+  let toMax = to.scrollHeight - to.clientHeight;
+  const padBottom = parseFloat(getComputedStyle(to).paddingBottom) || 0;
+  toMax = Math.max(0, toMax - padBottom);
   const max = from.scrollHeight - from.clientHeight;
   const ratio = max > 0 ? from.scrollTop / max : 0;
-  to.scrollTop = ratio * (to.scrollHeight - to.clientHeight);
+  to.scrollTop = ratio * toMax;
   requestAnimationFrame(() => {
     syncing = false;
   });
