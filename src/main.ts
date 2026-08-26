@@ -475,6 +475,22 @@ async function getTurndown(): Promise<{ turndown: (html: string) => string }> {
     const inst = new T();
     // Enable GFM table support so HTML <table> round-trips to markdown tables.
     inst.use(gfm.gfm as unknown);
+    // Force headings to round-trip as ATX (`# ` prefix) instead of the default
+    // setext form (`text` + `===`/`---` underline). This keeps the source editor
+    // showing `# Title`, which users expect, and stays consistent with how the
+    // source-mode format shortcuts write headings.
+    inst.use((service: { addRule: (k: string, r: unknown) => void }) => {
+      service.addRule("heading", {
+        filter: ["h1", "h2", "h3", "h4", "h5", "h6"],
+        replacement: (inner: string, node: Node) => {
+          const el = node as HTMLElement;
+          const level = parseInt(el.tagName.charAt(1), 10) || 1;
+          const text = inner.trim();
+          if (!text) return "";
+          return `\n\n${"#".repeat(level)} ${text}\n\n`;
+        },
+      });
+    });
     tdInstance = inst;
   }
   return tdInstance;
@@ -630,6 +646,30 @@ function goHome(): void {
   void updateStatusBar();
 }
 
+// Convert setext headings (a text line followed by `===` or `---` underline)
+// into ATX headings (`# ` / `## `) so the source editor shows the # markers.
+// Only converts when the underline is immediately below a non-empty text line;
+// a lone `---` after a blank line stays a horizontal rule.
+function setextToAtx(text: string): string {
+  const lines = text.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // A setext underline must be the line right after a text line.
+    if (/^\s*={2,}\s*$/.test(line) && out.length > 0 && out[out.length - 1].trim()) {
+      // The previous output line is the heading text.
+      const prev = out.pop() as string;
+      out.push(`# ${prev.trim()}`);
+    } else if (/^\s*-{2,}\s*$/.test(line) && out.length > 0 && out[out.length - 1].trim()) {
+      const prev = out.pop() as string;
+      out.push(`## ${prev.trim()}`);
+    } else {
+      out.push(line);
+    }
+  }
+  return out.join("\n");
+}
+
 async function openFile(
   path: string,
   watch = true,
@@ -637,14 +677,17 @@ async function openFile(
 ): Promise<void> {
   try {
     const result = await invoke<{ text: string; encoding: string }>("read_md", { path });
+    // Normalize setext headings to ATX so the source editor shows `#` markers
+    // (preview rendering is unchanged — both forms render as headings).
+    const normalized = setextToAtx(result.text);
     currentPath = path;
-    currentText = result.text;
+    currentText = normalized;
     currentEncoding = result.encoding;
     dirty = false;
     addRecent(path);
-    if (viewMode !== "read") editor.value = result.text;
+    if (viewMode !== "read") editor.value = normalized;
     setTitle();
-    await renderMarkdown(result.text, preserveScroll);
+    await renderMarkdown(normalized, preserveScroll);
     if (watch) {
       await invoke("watch_file", { path });
     }
@@ -1804,6 +1847,27 @@ function applyFormatOnLine(
     return { text: text.slice(0, lineStart) + leading + stripped + text.slice(end), delta: 0 };
   }
 
+  // Lists normalize like headings: already the target list → remove the marker
+  // (toggle off); otherwise strip any heading/list/quote prefix and set the
+  // target list marker (add / fix).
+  if (fmt === "ol" || fmt === "ul") {
+    const isOl = fmt === "ol";
+    const isOlLine = /^\d+\.\s+/.test(content);
+    const isUlLine = /^[-*+]\s+/.test(content);
+    // If it's already this list type, toggle it off.
+    if ((isOl && isOlLine) || (!isOl && isUlLine)) {
+      const removed = content.replace(isOl ? /^\d+\.\s+/ : /^[-*+]\s+/, "");
+      return { text: text.slice(0, lineStart) + leading + removed + text.slice(end), delta: -(content.length - removed.length) };
+    }
+    // Otherwise strip all block prefixes and set the target marker.
+    const stripped = content.replace(/^(#{1,6}\s*|[-*+]\s+|\d+\.\s+|>\s+)/, "");
+    const marker = isOl ? "1. " : "- ";
+    return {
+      text: text.slice(0, lineStart) + leading + marker + stripped + text.slice(end),
+      delta: marker.length - (content.length - stripped.length),
+    };
+  }
+
   // Code block: wrap/unwrap the whole line (or selection) in ``` fences.
   if (prefix === "```") {
     const isFenced = /^```/.test(content);
@@ -1823,11 +1887,159 @@ function applyFormatOnLine(
   return { text: text.slice(0, lineStart) + inserted + text.slice(end), delta: prefix.length };
 }
 
-function applyFormat(fmt: string): void {
+async function applyFormat(fmt: string): Promise<void> {
   if (!currentPath) {
     toast("未打开文件");
     return;
   }
+  const def = FMT_DEFS[fmt];
+  if (!def) return;
+
+  // Live (WYSIWYG) mode: operate directly on the block element containing the
+  // caret in the rendered DOM, then round-trip back to markdown. This keeps the
+  // cursor in place and applies heading/list/paragraph styles consistently with
+  // source mode (no unreliable text-offset mapping).
+  if (viewMode === "live") {
+    applyFormatLive(fmt);
+    return;
+  }
+
+  applyFormatToEditor(fmt);
+}
+
+// Apply a block/inline format to the caret's block element in the live DOM.
+async function applyFormatLive(fmt: string): Promise<void> {
+  const def = FMT_DEFS[fmt];
+  if (!def) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  // Find the block-level ancestor of the caret (p, h1-h6, li, blockquote).
+  let el = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? (range.startContainer as HTMLElement)
+    : (range.startContainer.parentElement ?? content);
+  while (el && el !== content && !/^(P|H[1-6]|LI|BLOCKQUOTE|PRE|UL|OL)$/.test(el.tagName)) {
+    el = el.parentElement ?? content;
+  }
+  if (el === content) return;
+  const tag = el.tagName;
+
+  const wrapText = (before: string, after: string, placeholder: string): void => {
+    const selected = sel.toString();
+    if (selected) {
+      const frag = document.createDocumentFragment();
+      frag.appendChild(document.createTextNode(before));
+      frag.appendChild(document.createTextNode(selected));
+      frag.appendChild(document.createTextNode(after));
+      range.deleteContents();
+      range.insertNode(frag);
+    } else {
+      // Insert template, keeping the placeholder selected.
+      const startNode = document.createTextNode(before);
+      const ph = document.createTextNode(placeholder);
+      const endNode = document.createTextNode(after);
+      const frag = document.createDocumentFragment();
+      frag.append(startNode, ph, endNode);
+      range.insertNode(frag);
+      const newRange = document.createRange();
+      newRange.setStart(ph, 0);
+      newRange.setEnd(ph, placeholder.length);
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    }
+  };
+
+  // Block formats: change the block element's tag to the target.
+  if (/^h[1-5]$/.test(fmt) || fmt === "para" || fmt === "ol" || fmt === "ul" || fmt === "blockquote") {
+    let newTag: string;
+    if (/^h[1-5]$/.test(fmt)) newTag = "H" + fmt.slice(1);
+    else if (fmt === "para") newTag = "P";
+    else if (fmt === "blockquote") newTag = "BLOCKQUOTE";
+    else {
+      // Lists are handled specially below.
+      if (tag === "LI") {
+        const list = el.parentElement;
+        if (list) {
+          const isOl = fmt === "ol";
+          const wantOl = list.tagName === "OL";
+          if (isOl !== wantOl) {
+            const newList = document.createElement(isOl ? "OL" : "UL");
+            const parent = list.parentElement;
+            newList.appendChild(el);
+            parent?.insertBefore(newList, list);
+            if (list.childNodes.length === 0) list.remove();
+          }
+          // Toggle off if already this list type: unwrap the LI.
+          else {
+            const parent = el.parentElement;
+            if (parent && parent.parentElement) {
+              parent.parentElement.insertBefore(el, parent.nextSibling);
+              if (parent.childNodes.length === 0) parent.remove();
+            }
+          }
+        }
+      } else {
+        // Convert the block to a list item.
+        const li = document.createElement("li");
+        while (el.firstChild) li.appendChild(el.firstChild);
+        const list = document.createElement(fmt === "ol" ? "OL" : "UL");
+        list.appendChild(li);
+        el.replaceWith(list);
+      }
+      // Mark dirty and round-trip.
+      void flushLiveAfterFormat();
+      return;
+    }
+    // Convert existing block element to the target tag (preserving children).
+    if (tag === "LI") {
+      // Unwrap the list item into a plain block.
+      const parent = el.parentElement;
+      const plain = document.createElement(newTag);
+      while (el.firstChild) plain.appendChild(el.firstChild);
+      if (parent) parent.replaceWith(plain);
+    } else {
+      const newEl = document.createElement(newTag);
+      while (el.firstChild) newEl.appendChild(el.firstChild);
+      el.replaceWith(newEl);
+    }
+    void flushLiveAfterFormat();
+    return;
+  }
+
+  // Inline formats (bold/italic/code/link/image) wrap the selection or insert a
+  // template at the caret, consistent with source mode.
+  if (def.inline) {
+    const { before, after, placeholder } = def.inline;
+    const selected = sel.toString();
+    if (selected && selected.startsWith(before) && selected.endsWith(after)) {
+      // Toggle off: unwrap.
+      const inner = selected.slice(before.length, selected.length - after.length);
+      const t = document.createTextNode(inner);
+      range.deleteContents();
+      range.insertNode(t);
+    } else {
+      wrapText(before, after, placeholder ?? "");
+    }
+    void flushLiveAfterFormat();
+    return;
+  }
+
+  void flushLiveAfterFormat();
+}
+
+// After a live-mode format change, round-trip the DOM back to markdown and
+// update the editor buffer + currentText. Crucially we do NOT re-render the
+// DOM — the format change is already applied in-place, and re-rendering would
+// rebuild the article and drop the caret.
+async function flushLiveAfterFormat(): Promise<void> {
+  // The DOM was mutated directly; mark liveDirty so syncSource round-trips it.
+  liveDirty = true;
+  await syncSource();
+  dirty = true;
+  setTitle();
+}
+
+function applyFormatToEditor(fmt: string): void {
   const def = FMT_DEFS[fmt];
   if (!def) return;
   const ta = editor;
@@ -1865,11 +2077,7 @@ function applyFormat(fmt: string): void {
     currentText = newText;
     dirty = true;
     setTitle();
-    if (viewMode === "source" || viewMode === "live") {
-      schedulePreview();
-    } else {
-      void renderMarkdown(newText, true);
-    }
+    void renderMarkdown(newText, true);
     return;
   }
 
@@ -1898,6 +2106,16 @@ function applyFormat(fmt: string): void {
         return leading + "#".repeat(level) + " " + content.replace(/^#{1,6}\s*/, "");
       }
       if (fmt === "para") return leading + content.replace(/^(#{1,6}\s*|[-*+]\s+|\d+\.\s+|>\s+)/, "");
+      if (fmt === "ol" || fmt === "ul") {
+        const isOl = fmt === "ol";
+        const isOlLine = /^\d+\.\s+/.test(content);
+        const isUlLine = /^[-*+]\s+/.test(content);
+        if ((isOl && isOlLine) || (!isOl && isUlLine)) {
+          return leading + content.replace(isOl ? /^\d+\.\s+/ : /^[-*+]\s+/, "");
+        }
+        const stripped = content.replace(/^(#{1,6}\s*|[-*+]\s+|\d+\.\s+|>\s+)/, "");
+        return leading + (isOl ? "1. " : "- ") + stripped;
+      }
       if (prefix === "```") {
         return /^```/.test(content)
           ? leading + content.replace(/^```\s*/, "")
@@ -1913,11 +2131,7 @@ function applyFormat(fmt: string): void {
   currentText = ta2.value;
   dirty = true;
   setTitle();
-  if (viewMode === "source" || viewMode === "live") {
-    schedulePreview();
-  } else {
-    void renderMarkdown(ta2.value, true);
-  }
+  void renderMarkdown(ta2.value, true);
 }
 
 // Bind the format buttons.
@@ -1964,7 +2178,7 @@ window.addEventListener("keydown", (ev) => {
   })();
   if (fmtKey && FMT_DEFS[fmtKey] !== undefined) {
     ev.preventDefault();
-    applyFormat(fmtKey);
+    void applyFormat(fmtKey);
   }
 });
 
