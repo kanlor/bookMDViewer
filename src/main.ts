@@ -459,17 +459,48 @@ async function renderMarkdown(
 }
 
 // Live (WYSIWYG) mode: make the rendered article contenteditable and push edits
-// back to the markdown source via turndown.
-let td: unknown = null;
-async function getTurndown(): Promise<{ turndown: (html: string) => string }> {
-  if (!td) td = (await import("turndown")).default;
-  const T = td as new () => { turndown: (html: string) => string };
-  return new T();
-}
+// back to the markdown source via turndown (with GFM rules for tables).
+let tdInstance: { turndown: (html: string) => string } | null = null;
 let liveBound = false;
+let liveDirty = false; // true when the live DOM has edits not yet flushed
+
+async function getTurndown(): Promise<{ turndown: (html: string) => string }> {
+  if (!tdInstance) {
+    const [mod, gfm] = await Promise.all([
+      import("turndown"),
+      import("turndown-plugin-gfm"),
+    ]);
+    const T = mod.default as new () => {
+      use: (p: unknown) => void;
+      turndown: (html: string) => string;
+    };
+    const inst = new T();
+    // Enable GFM table support so HTML <table> round-trips to markdown tables.
+    inst.use(gfm.gfm as unknown);
+    tdInstance = inst;
+  }
+  return tdInstance;
+}
+
+// Flush live-mode DOM edits back into currentText / editor.value immediately.
+async function syncSource(): Promise<void> {
+  window.clearTimeout((content as unknown as { _liveTimer?: number })._liveTimer);
+  if (viewMode === "live" && liveDirty) {
+    const T = await getTurndown();
+    const clone = content.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll(".fm-card, .copy-btn, .col-resizer, .fm-mark, .mermaid-zoomable").forEach(
+      (el) => el.remove(),
+    );
+    currentText = T.turndown(clone.innerHTML);
+    editor.value = currentText;
+    liveDirty = false;
+  } else if (viewMode === "source") {
+    currentText = editor.value;
+  }
+}
+
 function makeContentEditable(): void {
   content.contentEditable = "true";
-  // Avoid triggering edit on our own injected UI (copy buttons, resizers).
   content.querySelectorAll(".copy-btn, .col-resizer, .mermaid-zoomable").forEach(
     (el) => (el as HTMLElement).contentEditable = "false",
   );
@@ -479,28 +510,57 @@ function makeContentEditable(): void {
     "input",
     () => {
       if (viewMode !== "live") return;
+      // Mark dirty synchronously so an immediate close prompts to save.
+      if (!dirty) {
+        dirty = true;
+        setTitle();
+      }
+      liveDirty = true;
       // Debounced round-trip: HTML -> Markdown -> currentText/editor buffer.
       window.clearTimeout((content as unknown as { _liveTimer?: number })._liveTimer);
       (content as unknown as { _liveTimer?: number })._liveTimer = window.setTimeout(
         async () => {
+          if (viewMode !== "live") return;
           const T = await getTurndown();
-          // Strip injected UI (front-matter card, copy buttons, col resizers,
-          // find highlights, diagram lightbox hooks) before converting back.
           const clone = content.cloneNode(true) as HTMLElement;
           clone.querySelectorAll(".fm-card, .copy-btn, .col-resizer, .fm-mark, .mermaid-zoomable").forEach(
             (el) => el.remove(),
           );
-          const mdText = T.turndown(clone.innerHTML);
-          currentText = mdText;
-          editor.value = mdText;
-          dirty = true;
-          setTitle();
+          currentText = T.turndown(clone.innerHTML);
+          editor.value = currentText;
+          liveDirty = false;
         },
         250,
       );
     },
     { passive: true },
   );
+  // Paste as plain text so pasted markdown (e.g. `# title`, tables) stays as
+  // source text and renders correctly instead of becoming rich-text DOM.
+  content.addEventListener("paste", (ev) => {
+    if (viewMode !== "live") return;
+    ev.preventDefault();
+    const text = ev.clipboardData?.getData("text/plain") ?? "";
+    document.execCommand("insertText", false, text);
+    liveDirty = true;
+    if (!dirty) {
+      dirty = true;
+      setTitle();
+    }
+    // Flush the pasted content back to markdown and re-render so md syntax
+    // (headings, tables, lists) takes effect immediately.
+    void (async () => {
+      const T = await getTurndown();
+      const clone = content.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll(".fm-card, .copy-btn, .col-resizer, .fm-mark, .mermaid-zoomable").forEach(
+        (el) => el.remove(),
+      );
+      currentText = T.turndown(clone.innerHTML);
+      editor.value = currentText;
+      liveDirty = false;
+      void renderMarkdown(currentText, true);
+    })();
+  });
 }
 
 function setTitle(): void {
@@ -623,9 +683,12 @@ const MODE_META: Record<ViewMode, { label: string; title: string }> = {
 
 async function setViewMode(mode: ViewMode): Promise<void> {
   const prev = viewMode;
-  // Leaving live mode: disable contenteditable.
+  // Flush pending edits from the current mode before switching.
   if (prev === "live") {
+    await syncSource();
     content.contentEditable = "false";
+  } else if (prev === "source") {
+    currentText = editor.value;
   }
   viewMode = mode;
   layout.classList.toggle("mode-edit", mode === "source");
@@ -634,18 +697,12 @@ async function setViewMode(mode: ViewMode): Promise<void> {
   editToggle.title = MODE_META[mode].title;
 
   if (mode === "source") {
-    // Sync the editor buffer with the latest source (preserve unsaved edits).
-    if (prev !== "source" && !dirty) editor.value = currentText;
+    editor.value = currentText;
     editor.focus();
   } else if (mode === "live") {
-    // Re-render with contenteditable enabled and sync currentText from any
-    // source-mode edits.
-    if (prev === "source") currentText = editor.value;
     makeContentEditable();
     void renderMarkdown(currentText, true);
   } else {
-    // read: re-render from currentText (reflect source-mode edits).
-    if (prev === "source") currentText = editor.value;
     void renderMarkdown(currentText, true);
   }
   setTitle();
@@ -664,6 +721,8 @@ function toggleEdit(): void {
 async function save(): Promise<void> {
   if (!currentPath || !dirty) return;
   try {
+    // Flush any pending live-mode edits into the editor buffer first.
+    await syncSource();
     // Ignore the watcher event our own write is about to trigger.
     suppressReloadUntil = Date.now() + 1000;
     await invoke("write_md", { path: currentPath, content: editor.value });
@@ -1706,7 +1765,12 @@ const FMT_DEFS: Record<string, FmtDef> = {
   image: { inline: { before: "![", after: "](url)", placeholder: "图片说明" } },
 };
 
-function applyFormatOnLine(text: string, prefix: string, lineStart: number): {
+function applyFormatOnLine(
+  text: string,
+  fmt: string,
+  prefix: string,
+  lineStart: number,
+): {
   text: string;
   delta: number;
 } {
@@ -1716,11 +1780,24 @@ function applyFormatOnLine(text: string, prefix: string, lineStart: number): {
   const line = text.slice(lineStart, end);
   const leading = line.match(/^(\s*)/)?.[1] ?? "";
   const content = line.slice(leading.length);
-  if (prefix === "") {
-    // Paragraph: strip any single heading/list/quote prefix already present.
-    const stripped = content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, "");
+
+  // Headings normalize to the exact target level (never accumulate #s).
+  if (/^h[1-5]$/.test(fmt)) {
+    const level = parseInt(fmt.slice(1), 10);
+    const target = "#".repeat(level) + " ";
+    const stripped = content.replace(/^#{1,6}\s*/, "");
+    return {
+      text: text.slice(0, lineStart) + leading + target + stripped + text.slice(end),
+      delta: target.length - (content.length - stripped.length),
+    };
+  }
+
+  if (fmt === "para") {
+    // Paragraph: strip any heading/list/quote prefix entirely.
+    const stripped = content.replace(/^(#{1,6}\s*|[-*+]\s+|\d+\.\s+|>\s+)/, "");
     return { text: text.slice(0, lineStart) + leading + stripped + text.slice(end), delta: 0 };
   }
+
   // Code block: wrap/unwrap the whole line (or selection) in ``` fences.
   if (prefix === "```") {
     const isFenced = /^```/.test(content);
@@ -1796,7 +1873,7 @@ function applyFormat(fmt: string): void {
   const end2 = ta2.selectionEnd;
   if (start2 === end2) {
     const lineStart = src.lastIndexOf("\n", start2 - 1) + 1;
-    const r = applyFormatOnLine(src, prefix, lineStart);
+    const r = applyFormatOnLine(src, fmt, prefix, lineStart);
     ta2.value = r.text;
     const newPos = start2 + r.delta;
     ta2.setSelectionRange(newPos, newPos);
@@ -1809,7 +1886,12 @@ function applyFormat(fmt: string): void {
     const processed = lines.map((l) => {
       const leading = l.match(/^(\s*)/)?.[1] ?? "";
       const content = l.slice(leading.length);
-      if (prefix === "") return leading + content.replace(/^(#{1,6}\s+|[-*+]\s+|\d+\.\s+|>\s+)/, "");
+      // Headings normalize to the exact target level.
+      if (/^h[1-5]$/.test(fmt)) {
+        const level = parseInt(fmt.slice(1), 10);
+        return leading + "#".repeat(level) + " " + content.replace(/^#{1,6}\s*/, "");
+      }
+      if (fmt === "para") return leading + content.replace(/^(#{1,6}\s*|[-*+]\s+|\d+\.\s+|>\s+)/, "");
       if (prefix === "```") {
         return /^```/.test(content)
           ? leading + content.replace(/^```\s*/, "")

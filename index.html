@@ -9,18 +9,39 @@
   </head>
   <body>
     <div id="toolbar">
-      <button id="open-btn" class="icon-btn" title="打开文件 (Ctrl+O)" aria-label="打开文件">📂</button>
-      <button id="files-btn" class="icon-btn" title="文件浏览器 (Ctrl+B)" aria-label="文件浏览器">🗂</button>
-      <button id="font-dec" class="icon-btn" title="缩小字体 (Ctrl+-)" aria-label="缩小字体">A−</button>
-      <button id="font-inc" class="icon-btn" title="放大字体 (Ctrl++)" aria-label="放大字体">A+</button>
-      <button id="wide-toggle" class="icon-btn" title="宽版 / 窄版切换 (Ctrl+Shift+\)" aria-label="切换宽版">↔</button>
-      <button id="theme-toggle" class="icon-btn" title="主题:跟随系统 (点击切换)" aria-label="切换主题">🖥️</button>
-      <button id="settings-btn" class="icon-btn" title="设置" aria-label="设置">⚙</button>
-      <button id="save-btn" title="保存 (Ctrl+S)" aria-label="保存" hidden>💾 保存</button>
-      <button id="export-btn" title="导出为 HTML" aria-label="导出为 HTML">⬇ HTML</button>
-      <button id="edit-toggle" title="切换编辑模式 (Ctrl+E)" aria-label="切换编辑模式">✎ 编辑</button>
-      <button id="toc-toggle" title="切换大纲 (Ctrl+\)" aria-label="切换大纲">☰</button>
-      <button id="close-doc-btn" class="icon-btn" title="关闭文档 — 返回首页" aria-label="关闭文档" hidden>✕</button>
+      <div class="toolbar-group" id="fmt-group">
+        <button id="fmt-h1" title="标题1 (Ctrl+1)">H1</button>
+        <button id="fmt-h2" title="标题2 (Ctrl+2)">H2</button>
+        <button id="fmt-h3" title="标题3 (Ctrl+3)">H3</button>
+        <button id="fmt-h4" title="标题4 (Ctrl+4)">H4</button>
+        <button id="fmt-h5" title="标题5 (Ctrl+5)">H5</button>
+        <button id="fmt-para" title="正文 (Ctrl+`)">¶</button>
+        <button id="fmt-ol" title="有序列表 (Alt+1)">1.</button>
+        <button id="fmt-ul" title="无序列表 (Alt+2)">•</button>
+        <button id="fmt-blockquote" title="引用 (Alt+5)">❝</button>
+        <button id="fmt-codeblock" title="代码块 (Alt+3)">⟨/⟩</button>
+        <button id="fmt-hr" title="分割线 (Alt+7)">───</button>
+        <button id="fmt-bold" title="粗体 (Ctrl+B)"><b>B</b></button>
+        <button id="fmt-italic" title="斜体 (Ctrl+I)"><i>I</i></button>
+        <button id="fmt-code" title="行内代码 (Alt+`)">&lt;/&gt;</button>
+        <button id="fmt-link" title="链接 (Alt+6)">🔗</button>
+        <button id="fmt-image" title="图片 (Alt+4)">🖼</button>
+      </div>
+      <div class="toolbar-spacer"></div>
+      <div class="toolbar-group" id="action-group">
+        <button id="open-btn" class="icon-btn" title="打开文件 (Ctrl+O)" aria-label="打开文件">📂</button>
+        <button id="files-btn" class="icon-btn" title="文件浏览器 (Ctrl+B)" aria-label="文件浏览器">🗂</button>
+        <button id="font-dec" class="icon-btn" title="缩小字体 (Ctrl+-)" aria-label="缩小字体">A−</button>
+        <button id="font-inc" class="icon-btn" title="放大字体 (Ctrl++)" aria-label="放大字体">A+</button>
+        <button id="wide-toggle" class="icon-btn" title="宽版 / 窄版切换 (Ctrl+Shift+\)" aria-label="切换宽版">↔</button>
+        <button id="theme-toggle" class="icon-btn" title="主题:跟随系统 (点击切换)" aria-label="切换主题">🖥️</button>
+        <button id="settings-btn" class="icon-btn" title="设置" aria-label="设置">⚙</button>
+        <button id="save-btn" title="保存 (Ctrl+S)" aria-label="保存" hidden>💾 保存</button>
+        <button id="export-btn" title="导出为 HTML" aria-label="导出为 HTML">⬇ HTML</button>
+        <button id="edit-toggle" title="切换编辑模式 (Ctrl+E)" aria-label="切换编辑模式">✎ 编辑</button>
+        <button id="toc-toggle" title="切换大纲 (Ctrl+\)" aria-label="切换大纲">☰</button>
+        <button id="close-doc-btn" class="icon-btn" title="关闭文档 — 返回首页" aria-label="关闭文档" hidden>✕</button>
+      </div>
     </div>
     <div id="toast" hidden></div>
     <div id="find-bar" hidden>
@@ -59,25 +80,6 @@
       <span id="sb-stats" class="sb-item" title="内容统计">中文:0 总字:0 图:0 表:0 代码:0</span>
       <span class="sb-sep">|</span>
       <span id="sb-fileinfo" class="sb-item" title="文件属性">--</span>
-    </div>
-
-    <div id="format-bar" title="格式快捷键">
-      <button id="fmt-h1" title="标题1 (Ctrl+1)">H1</button>
-      <button id="fmt-h2" title="标题2 (Ctrl+2)">H2</button>
-      <button id="fmt-h3" title="标题3 (Ctrl+3)">H3</button>
-      <button id="fmt-h4" title="标题4 (Ctrl+4)">H4</button>
-      <button id="fmt-h5" title="标题5 (Ctrl+5)">H5</button>
-      <button id="fmt-para" title="正文 (Ctrl+`)">¶ 正文</button>
-      <button id="fmt-ol" title="有序列表 (Alt+1)">1. 有序</button>
-      <button id="fmt-ul" title="无序列表 (Alt+2)">• 无序</button>
-      <button id="fmt-blockquote" title="引用 (Alt+5)">❝ 引用</button>
-      <button id="fmt-codeblock" title="代码块 (Alt+3)">⟨/⟩ 代码</button>
-      <button id="fmt-hr" title="分割线 (Alt+7)">───</button>
-      <button id="fmt-bold" title="粗体 (Ctrl+B)">B 粗</button>
-      <button id="fmt-italic" title="斜体 (Ctrl+I)">I 斜</button>
-      <button id="fmt-code" title="行内代码 (Alt+`)">&lt;/&gt;</button>
-      <button id="fmt-link" title="链接 (Alt+6)">🔗 链接</button>
-      <button id="fmt-image" title="图片 (Alt+4)">🖼 图片</button>
     </div>
 
     <div id="diagram-modal" hidden>

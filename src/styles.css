@@ -239,37 +239,49 @@ body {
 }
 
 #toolbar {
-  position: fixed;
-  top: 10px;
-  right: 14px;
-  z-index: 10;
   display: flex;
+  align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+  user-select: none;
+}
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.toolbar-spacer {
+  margin-left: auto;
 }
 #toolbar button {
-  height: 32px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
-  color: var(--muted);
-  font-size: 13px;
+  color: var(--fg);
+  font-size: 12px;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  white-space: nowrap;
 }
 #toolbar button:hover {
-  color: var(--fg);
+  color: var(--accent);
   border-color: var(--accent);
 }
+#toolbar .icon-btn {
+  width: 30px;
+  padding: 0;
+  font-size: 14px;
+}
 #toc-toggle {
-  width: 32px;
+  width: 30px;
   padding: 0;
   font-size: 15px;
-}
-#toolbar .icon-btn {
-  width: 36px;
-  padding: 0;
-  font-weight: 600;
 }
 
 /* ---------- Editor (live edit + preview) ---------- */
@@ -395,7 +407,7 @@ body {
 /* ---------- Find bar ---------- */
 #find-bar {
   position: fixed;
-  top: 8px;
+  top: 48px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
@@ -1109,33 +1121,4 @@ body.col-resizing * {
   padding: 0 8px;
   color: var(--border);
   font-size: 10px;
-}
-
-/* ---------- Format shortcut bar ---------- */
-#format-bar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  flex: 0 0 auto;
-  min-height: 30px;
-  padding: 3px 12px;
-  background: var(--code-bg);
-  border-top: 1px solid var(--border);
-  user-select: none;
-}
-#format-bar button {
-  height: 22px;
-  padding: 0 9px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-#format-bar button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
